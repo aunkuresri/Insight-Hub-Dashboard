@@ -30,7 +30,7 @@
   gap: 6px;
   height: 32px;
   padding: 0 10px;
-  border: 1px solid var(--color-border-strong);
+  border: 1px solid color-mix(in oklab, var(--color-accent) 22%, rgb(0 0 0 / 0.12));
   border-radius: var(--radius-sm);
   background: #ffffff;
   color: var(--color-fg);
