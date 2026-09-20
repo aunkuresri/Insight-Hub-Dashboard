@@ -87,8 +87,8 @@ export function buildChartRenderer(args: {
 }): BuildResult {
   const { rows, fields, aliases, requestedScheme, sizeField, sizeLabel } = args;
   const palette = CHART_PALETTES[requestedScheme] ?? CHART_PALETTES.Auto;
-  // 2 → 1st & last; 3 → 1st, 2nd & last; n → first n-1 + last of scheme
   const attributes = fields.map((field, index) => {
+    // 2 → 1st & last; 3 → 1st, 2nd & last; n → first n-1 + last of scheme
     const n = fields.length;
     let rgb = palette[0]!;
     if (palette.length && n > 1) {
@@ -250,10 +250,10 @@ function buildChoropleth(args: {
     const rgb = ramp[i]!;
     const classLabel =
       i === 0
-        ? `\u2264 ${formatBreak(maxV)}`
+        ? `≤ ${formatBreak(maxV)}`
         : i === classCount - 1
           ? `> ${formatBreak(minV)}`
-          : `${formatBreak(minV)} \u2013 ${formatBreak(maxV)}`;
+          : `${formatBreak(minV)} – ${formatBreak(maxV)}`;
     infos.push({
       classMinValue: i === 0 ? minV : minV,
       classMaxValue: maxV,
@@ -308,7 +308,7 @@ function buildBivariate(args: {
   const breaksX = quantileBreaks(valuesX, 3);
   const breaksY = quantileBreaks(valuesY, 3);
   if (breaksX.length < 2 || breaksY.length < 2) {
-    throw new Error("Insufficient numeric variation for 3 \u00d7 3 bivariate symbology.");
+    throw new Error("Insufficient numeric variation for 3 × 3 bivariate symbology.");
   }
   const scheme = resolveScheme(requestedScheme, "Bivariate Colors (3 x 3)");
   const palette = bivariatePalette(scheme);
@@ -340,7 +340,7 @@ function buildBivariate(args: {
     }
   }
 
-  const title = `${labelX} \u00d7 ${labelY}`;
+  const title = `${labelX} × ${labelY}`;
   return {
     renderer: {
       type: "uniqueValue",
