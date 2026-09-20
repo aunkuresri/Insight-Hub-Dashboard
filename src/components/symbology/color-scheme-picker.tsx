@@ -15,7 +15,15 @@ type Props = {
 
 function rampFor(scheme: ColorScheme, mode: "chart" | "boundary") {
   if (mode === "chart") {
-    return (CHART_PALETTES[scheme] ?? CHART_PALETTES.Auto).slice(0, 5);
+    const palette = CHART_PALETTES[scheme] ?? CHART_PALETTES.Auto;
+    // Preview matches run behavior: span 1st … last across the scheme.
+    const n = Math.min(5, palette.length);
+    if (n <= 1) return palette.slice(0, 1);
+    if (n === 2) return [palette[0]!, palette[palette.length - 1]!];
+    const out = [];
+    for (let i = 0; i < n - 1; i += 1) out.push(palette[i]!);
+    out.push(palette[palette.length - 1]!);
+    return out;
   }
   return CHOROPLETH_RAMPS[scheme] ?? CHOROPLETH_RAMPS.Auto;
 }
