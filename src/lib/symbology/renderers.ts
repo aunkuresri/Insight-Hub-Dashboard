@@ -88,13 +88,11 @@ export function buildChartRenderer(args: {
   const { rows, fields, aliases, requestedScheme, sizeField, sizeLabel } = args;
   const palette = CHART_PALETTES[requestedScheme] ?? CHART_PALETTES.Auto;
   // 2 vars → 1st & last; 3 → 1st, 2nd & last; n → first n-1 + last of scheme
-  const nFields = fields.length;
   const attributes = fields.map((field, index) => {
-    let rgb: RGB = [128, 128, 128];
-    if (palette.length) {
-      if (nFields <= 1) rgb = palette[0]!;
-      else if (index === nFields - 1) rgb = palette[palette.length - 1]!;
-      else rgb = palette[Math.min(index, palette.length - 2)]!;
+    const n = fields.length;
+    let rgb = palette[0]!;
+    if (palette.length && n > 1) {
+      rgb = index === n - 1 ? palette[palette.length - 1]! : palette[Math.min(index, palette.length - 2)]!;
     }
     return {
       field,
@@ -196,75 +194,232 @@ export function buildBoundaryRenderer(args: {
   requestedScheme: string;
 }): BuildResult {
   const { rows, fields, aliases, requestedScheme } = args;
-  const method = methodForBoundary(fields.length);
-  if (method === "Quantile choropleth") {
-    const field = fields[0]!;
-    const values = numericValues(rows, field);
-    const breaks = quantileBreaks(values, 5);
-    const ramp = CHOROPLETH_RAMPS[requestedScheme] ?? CHOROPLETH_RAMPS.Auto;
-    if (fields.length === 0 || values.length === 0) {
-      const rgb = SINGLE_SYMBOL_COLORS[requestedScheme] ?? SINGLE_SYMBOL_COLORS.Auto;
-      return {
-        renderer: {
-          type: "simple",
-          symbol: polygonSymbol(rgb),
-          label: aliases[field] ?? field,
-        },
-        legend: {
-          method: "Single Symbol",
-          scheme: requestedScheme,
-          title: aliases[field] ?? field,
-          fields: fields.map((name) => ({ id: name, name, label: aliases[name] ?? name })),
-          colors: { [field]: rgb },
-          classes: [{ label: aliases[field] ?? field, color: rgb }],
-        },
-      };
-    }
-    const classBreakInfos = breaks.slice(0, -1).map((lo, i) => {
-      const hi = breaks[i + 1]!;
-      const rgb = ramp[Math.min(i, ramp.length - 1)]!;
-      return {
-        classMinValue: lo,
-        classMaxValue: hi,
-        label: `${lo.toFixed(1)} – ${hi.toFixed(1)}`,
-        symbol: polygonSymbol(rgb),
-      };
+  if (fields.length <= 1) return buildChoropleth({ rows, field: fields[0]!, aliases, requestedScheme });
+  if (fields.length === 2) {
+    return buildBivariate({
+      rows,
+      fieldX: fields[0]!,
+      fieldY: fields[1]!,
+      aliases,
+      requestedScheme,
     });
+  }
+  if (fields.length === 3) {
+    return buildTernary({
+      rows,
+      fields: fields as [string, string, string],
+      aliases,
+      requestedScheme,
+    });
+  }
+  return buildPredominantCategory({ rows, fields, aliases, requestedScheme });
+}
+
+function buildChoropleth(args: {
+  rows: Row[];
+  field: string;
+  aliases: Record<string, string>;
+  requestedScheme: string;
+}): BuildResult {
+  const { rows, field, aliases, requestedScheme } = args;
+  const values = numericValues(rows, field);
+  const breaks = quantileBreaks(values, 5);
+  const ramp = CHOROPLETH_RAMPS[requestedScheme] ?? CHOROPLETH_RAMPS.Auto;
+  if (!field || values.length === 0) {
+    const rgb = SINGLE_SYMBOL_COLORS[requestedScheme] ?? SINGLE_SYMBOL_COLORS.Auto;
     return {
       renderer: {
-        type: "classBreaks",
-        field,
-        classificationMethod: "esriClassifyQuantile",
-        minValue: breaks[0],
-        classBreakInfos,
-        defaultSymbol: defaultSymbol(),
-        defaultLabel: "No data",
+        type: "simple",
+        symbol: polygonSymbol(rgb),
+        label: aliases[field] ?? field,
       },
       legend: {
-        method,
+        method: "Single Symbol",
         scheme: requestedScheme,
         title: aliases[field] ?? field,
-        fields: fields.map((name) => ({ id: name, name, label: aliases[name] ?? name })),
-        colors: Object.fromEntries(
-          classBreakInfos.map((c, i) => [`c${i}`, [c.symbol.color[0], c.symbol.color[1], c.symbol.color[2]] as RGB]),
-        ),
-        classes: classBreakInfos.map((c) => ({
-          label: c.label,
-          color: [c.symbol.color[0], c.symbol.color[1], c.symbol.color[2]] as RGB,
-        })),
+        fields: [{ id: field, name: field, label: aliases[field] ?? field }],
+        colors: { [field]: rgb },
+        classes: [{ label: aliases[field] ?? field, color: rgb }],
       },
     };
   }
-  // Fallback for multi-field methods — full bivariate/ternary/predominant logic in complete source
+  const classBreakInfos = breaks.slice(0, -1).map((lo, i) => {
+    const hi = breaks[i + 1]!;
+    const rgb = ramp[Math.min(i, ramp.length - 1)]!;
+    return {
+      classMinValue: lo,
+      classMaxValue: hi,
+      label: `${lo.toFixed(1)} – ${hi.toFixed(1)}`,
+      symbol: polygonSymbol(rgb),
+    };
+  });
   return {
-    renderer: { type: "simple", symbol: defaultSymbol() },
+    renderer: {
+      type: "classBreaks",
+      field,
+      classificationMethod: "esriClassifyQuantile",
+      minValue: breaks[0],
+      classBreakInfos,
+      defaultSymbol: defaultSymbol(),
+      defaultLabel: "No data",
+    },
     legend: {
-      method,
+      method: "Quantile choropleth",
       scheme: requestedScheme,
-      title: method,
+      title: aliases[field] ?? field,
+      fields: [{ id: field, name: field, label: aliases[field] ?? field }],
+      colors: Object.fromEntries(
+        classBreakInfos.map((c, i) => [`c${i}`, [c.symbol.color[0], c.symbol.color[1], c.symbol.color[2]] as RGB]),
+      ),
+      classes: classBreakInfos.map((c) => ({
+        label: c.label,
+        color: [c.symbol.color[0], c.symbol.color[1], c.symbol.color[2]] as RGB,
+      })),
+    },
+  };
+}
+
+function buildBivariate(args: {
+  rows: Row[];
+  fieldX: string;
+  fieldY: string;
+  aliases: Record<string, string>;
+  requestedScheme: string;
+}): BuildResult {
+  const { rows, fieldX, fieldY, aliases, requestedScheme } = args;
+  const scheme = resolveScheme(requestedScheme, "Bivariate Colors (3 x 3)");
+  const palette = bivariatePalette(scheme);
+  const xs = numericValues(rows, fieldX);
+  const ys = numericValues(rows, fieldY);
+  const xBreaks = quantileBreaks(xs, 3);
+  const yBreaks = quantileBreaks(ys, 3);
+  const uniqueValueInfos: Array<Record<string, unknown>> = [];
+  const classes: LegendClass[] = [];
+  for (let yClass = 1; yClass <= 3; yClass += 1) {
+    for (let xClass = 1; xClass <= 3; xClass += 1) {
+      const code = `${xClass}_${yClass}`;
+      const rgb = palette[code]!;
+      uniqueValueInfos.push({
+        value: code,
+        label: `X${xClass} / Y${yClass}`,
+        symbol: polygonSymbol(rgb),
+      });
+      classes.push({ label: `X${xClass} / Y${yClass}`, color: rgb, value: code });
+    }
+  }
+  const labelX = aliases[fieldX] ?? fieldX;
+  const labelY = aliases[fieldY] ?? fieldY;
+  return {
+    renderer: {
+      type: "uniqueValue",
+      field1: "__bivar",
+      defaultSymbol: defaultSymbol(),
+      defaultLabel: "No data",
+      uniqueValueInfos,
+      valueExpression: `var x = ${arcadeNumber(fieldX)}; var y = ${arcadeNumber(fieldY)}; if (IsEmpty(x) || IsEmpty(y)) { return null; } var xb = [${", ".join(str(b) for b in xBreaks)}]; var yb = [${", ".join(str(b) for b in yBreaks)}]; function cls(v, b) { if (v <= b[1]) return 1; if (v <= b[2]) return 2; return 3; } return Text(cls(x, xb)) + "_" + Text(cls(y, yb));`,
+    },
+    legend: {
+      method: "Bivariate Colors (3 x 3)",
+      scheme,
+      title: `${labelX} × ${labelY}`,
+      fields: [
+        { id: fieldX, name: fieldX, label: labelX },
+        { id: fieldY, name: fieldY, label: labelY },
+      ],
+      colors: Object.fromEntries(classes.map((c) => [c.value!, c.color])),
+      classes,
+      bivariate: { xLabel: labelX, yLabel: labelY, palette },
+    },
+  };
+}
+
+function buildTernary(args: {
+  rows: Row[];
+  fields: [string, string, string];
+  aliases: Record<string, string>;
+  requestedScheme: string;
+}): BuildResult {
+  const { rows, fields, aliases, requestedScheme } = args;
+  const scheme = resolveScheme(requestedScheme, "Ternary / Triangular Composition");
+  const labels = fields.map((f) => aliases[f] ?? f);
+  const uniqueValueInfos: Array<Record<string, unknown>> = [];
+  const classes: LegendClass[] = [];
+  const seen = new Set<string>();
+  for (const row of rows) {
+    const a = safeNumber(row[fields[0]]) ?? 0;
+    const b = safeNumber(row[fields[1]]) ?? 0;
+    const c = safeNumber(row[fields[2]]) ?? 0;
+    const total = a + b + c;
+    if (total <= 0) continue;
+    const shareA = a / total;
+    const shareB = b / total;
+    const shareC = c / total;
+    const q = quantizeTernary(shareA, shareB, shareC);
+    const code = `${q[0]}_${q[1]}_${q[2]}`;
+    if (seen.has(code)) continue;
+    seen.add(code);
+    const rgb = blendTernary(shareA, shareB, shareC, scheme);
+    uniqueValueInfos.push({ value: code, label: code, symbol: polygonSymbol(rgb) });
+    classes.push({ label: code, color: rgb, value: code });
+  }
+  return {
+    renderer: {
+      type: "uniqueValue",
+      field1: "__tern",
+      defaultSymbol: defaultSymbol(),
+      defaultLabel: "No data",
+      uniqueValueInfos,
+    },
+    legend: {
+      method: "Ternary / Triangular Composition",
+      scheme,
+      title: labels.join(" / "),
+      fields: fields.map((name, i) => ({ id: name, name, label: labels[i]! })),
+      colors: Object.fromEntries(classes.map((c) => [c.value!, c.color])),
+      classes,
+      ternary: { a: labels[0]!, b: labels[1]!, c: labels[2]!, scheme },
+    },
+  };
+}
+
+function buildPredominantCategory(args: {
+  rows: Row[];
+  fields: string[];
+  aliases: Record<string, string>;
+  requestedScheme: string;
+}): BuildResult {
+  const { fields, aliases, requestedScheme } = args;
+  const scheme = resolveScheme(requestedScheme, "Predominant Variable");
+  const palette = scheme === "Qualitative - Muted" ? QUALITATIVE_MUTED : QUALITATIVE_BRIGHT;
+  const uniqueValueInfos = fields.map((field, index) => {
+    const rgb = palette[index % palette.length]!;
+    return {
+      value: field,
+      label: aliases[field] ?? field,
+      symbol: polygonSymbol(rgb),
+    };
+  });
+  return {
+    renderer: {
+      type: "uniqueValue",
+      field1: "__pred",
+      defaultSymbol: defaultSymbol(),
+      defaultLabel: "No data",
+      uniqueValueInfos,
+    },
+    legend: {
+      method: "Predominant Variable",
+      scheme,
+      title: "Predominant indicator",
       fields: fields.map((name) => ({ id: name, name, label: aliases[name] ?? name })),
-      colors: {},
-      classes: [],
+      colors: Object.fromEntries(
+        uniqueValueInfos.map((u) => [u.value, [u.symbol.color[0], u.symbol.color[1], u.symbol.color[2]] as RGB]),
+      ),
+      classes: uniqueValueInfos.map((u) => ({
+        label: u.label,
+        color: [u.symbol.color[0], u.symbol.color[1], u.symbol.color[2]] as RGB,
+        value: u.value,
+      })),
     },
   };
 }
