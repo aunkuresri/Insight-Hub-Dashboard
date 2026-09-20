@@ -24,11 +24,13 @@ export type ColorScheme = (typeof COLOR_SCHEMES)[number];
 
 export const CHART_PALETTES: Record<string, RGB[]> = {
   Auto: [
-    [31, 119, 180],
+    // Balanced multi-hue qualitative (not a blue sequential ramp).
+    // Distinct from "Purple - Teal" which is a purple→teal continuum.
+    [87, 65, 155],
     [255, 127, 14],
     [44, 160, 44],
     [214, 39, 40],
-    [148, 103, 189],
+    [31, 119, 180],
     [140, 86, 75],
     [227, 119, 194],
     [188, 189, 34],
@@ -247,11 +249,12 @@ export const QUALITATIVE_MUTED: RGB[] = [
 
 export const CHOROPLETH_RAMPS: Record<string, RGB[]> = {
   Auto: [
-    [239, 243, 255],
-    [189, 215, 231],
-    [107, 174, 214],
-    [49, 130, 189],
-    [8, 81, 156],
+    // Neutral multi-stop sequential (slate→teal), not a pure blue ramp.
+    [241, 244, 248],
+    [198, 210, 222],
+    [120, 160, 185],
+    [64, 130, 150],
+    [30, 80, 95],
   ],
   "Purple - Teal": [
     [106, 81, 163],
@@ -326,7 +329,7 @@ export const CHOROPLETH_RAMPS: Record<string, RGB[]> = {
 };
 
 export const SINGLE_SYMBOL_COLORS: Record<string, RGB> = {
-  Auto: [31, 119, 180],
+  Auto: [64, 130, 150],
   "Purple - Teal": [91, 195, 198],
   "Blue - Red": [72, 139, 190],
   "Green - Purple": [74, 170, 108],
