@@ -36,6 +36,15 @@ type Toast = { kind: "success" | "danger" | "info"; message: string } | null;
 
 const RANKING_COLUMN_COUNT = 3;
 
+/** Fixed Incident fields for the map KPI bar — independent of analytics window group. */
+const MAP_INCIDENT_KPI_IDS = [
+  "Crime",
+  "Judgmental",
+  "Resilience",
+  "Total_Death",
+  "Total_Injured",
+] as const;
+
 function defaultRankingColumns(groupId: string): string[] {
   const group = INDICATOR_GROUPS.find((g) => g.id === groupId);
   const ids = (group?.fields ?? []).map((f) => f.id);
@@ -50,11 +59,8 @@ export type SelectionAncestor = {
 };
 
 export type SelectionInfo = {
-  /** Administrative unit type, e.g. Division, District, Upazila, Union / Ward. */
   unitLabel: string;
-  /** Name of the selected unit. */
   areaName: string;
-  /** Parent units from coarsest to parent of selected (empty when Division). */
   ancestors: SelectionAncestor[];
 };
 
@@ -71,6 +77,8 @@ type AppState = {
   analyticsMetric: string;
   rankingColumns: string[];
   kpis: KpiValue[];
+  /** Always Incident KPIs for the map bar; not tied to analyticsGroup. */
+  mapIncidentKpis: KpiValue[];
   ranking: RankingRow[];
   composition: CompositionSlice[];
   featureCount: number;
@@ -80,19 +88,16 @@ type AppState = {
   toast: Toast;
   selectionName: string | null;
   selectionGeometry: unknown | null;
-  /** Hierarchical admin context for the map polygon selection. */
   selectionInfo: SelectionInfo | null;
   symLayerGroup: LayerGroupId;
   symAdminLevel: AdminLevelId | "all";
   symBrowseGroup: string | null;
-  /** Separate field lists per layer group so Boundary and Chart keep independent selections. */
   symFieldsByGroup: SymFieldsByGroup;
   symScheme: string;
   symSizeField: string;
   symApplying: boolean;
   applied: Record<LayerGroupId, AppliedLegend | null>;
   currentLevel: () => AdminLevelId;
-  /** Fields selected for the currently active layer group (Boundary or Chart). */
   currentSymFields: () => string[];
   setMapReady: (ready: boolean) => void;
   setMapError: (message: string | null) => void;
@@ -150,6 +155,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   analyticsMetric: initialColumns[0] ?? getAppConfig().defaultMetric,
   rankingColumns: initialColumns,
   kpis: [],
+  mapIncidentKpis: [],
   ranking: [],
   composition: [],
   featureCount: 0,
@@ -197,8 +203,6 @@ export const useAppStore = create<AppState>((set, get) => ({
   },
   setFilter: async (level, value) => {
     const filters = nextFilters(get().filters, level, value);
-    // Apply definitionExpression + zoom on the map first so any store
-    // subscribers (analytics preview) copy the updated expressions.
     const map = getMapController();
     if (map) await map.applyFilters(filters);
     set({ filters, selectionName: null, selectionGeometry: null, selectionInfo: null });
@@ -285,27 +289,35 @@ export const useAppStore = create<AppState>((set, get) => ({
       const groupFields = group?.fields ?? [];
 
       const kpiFieldDefs = kpiFieldsForGroup(state.analyticsGroup);
-      const kpiStats = kpiFieldDefs
-        .map((field) => {
-          const resolved = resolveFieldName(schema, field.id);
-          if (!resolved) return null;
-          return {
-            statisticType: "sum",
-            onStatisticField: resolved,
-            outStatisticFieldName: `kpi_${field.id}`,
-            id: field.id,
-            label: field.label,
-          };
-        })
-        .filter(Boolean) as Array<{
-        statisticType: string;
-        onStatisticField: string;
-        outStatisticFieldName: string;
-        id: string;
-        label: string;
-      }>;
+      const mapIncidentFieldDefs = MAP_INCIDENT_KPI_IDS.map((id) => ({
+        id,
+        label: labelForField(id),
+      }));
+
+      const statsFieldMap = new Map<
+        string,
+        { statisticType: string; onStatisticField: string; outStatisticFieldName: string; id: string; label: string }
+      >();
+      for (const field of [...kpiFieldDefs, ...mapIncidentFieldDefs]) {
+        if (statsFieldMap.has(field.id)) continue;
+        const resolved = resolveFieldName(schema, field.id);
+        if (!resolved) continue;
+        statsFieldMap.set(field.id, {
+          statisticType: "sum",
+          onStatisticField: resolved,
+          outStatisticFieldName: `kpi_${field.id}`,
+          id: field.id,
+          label: field.label,
+        });
+      }
+      const kpiStats = Array.from(statsFieldMap.values());
 
       let kpiValues: KpiValue[] = kpiFieldDefs.map((f) => ({ id: f.id, label: f.label, value: null }));
+      let mapIncidentKpis: KpiValue[] = mapIncidentFieldDefs.map((f) => ({
+        id: f.id,
+        label: f.label,
+        value: null,
+      }));
       if (kpiStats.length) {
         const stats = await map.queryStats(
           layer,
@@ -321,6 +333,11 @@ export const useAppStore = create<AppState>((set, get) => ({
           kpiStats.map((s) => [s.id, stats[s.outStatisticFieldName] ?? null] as const),
         );
         kpiValues = kpiFieldDefs.map((f) => ({
+          id: f.id,
+          label: f.label,
+          value: byId.has(f.id) ? (byId.get(f.id) ?? null) : null,
+        }));
+        mapIncidentKpis = mapIncidentFieldDefs.map((f) => ({
           id: f.id,
           label: f.label,
           value: byId.has(f.id) ? (byId.get(f.id) ?? null) : null,
@@ -394,6 +411,7 @@ export const useAppStore = create<AppState>((set, get) => ({
 
       set({
         kpis: kpiValues,
+        mapIncidentKpis,
         ranking,
         composition,
         featureCount: count,
@@ -491,7 +509,7 @@ export const useAppStore = create<AppState>((set, get) => ({
     const symFields = symFieldsByGroup[symLayerGroup] ?? [];
     const symAdminLevel = "all" as const;
     if (!symFields.length) {
-      set({ toast: { kind: "info", message: "Select at least one indicator field." } });
+      set({ toast: { kind: "info", message: "Select at least one indicator field." });
       return;
     }
     set({ symApplying: true });
@@ -542,7 +560,9 @@ export const useAppStore = create<AppState>((set, get) => ({
         symApplying: false,
         toast: {
           kind: "success",
-          message: `Applied ${describeMethod(symLayerGroup, symFields.length)} to ${layers.length} layer${layers.length > 1 ? "s" : ""}.`,
+          message: lastLegend
+            ? `${lastLegend.methodLabel} applied to ${symLayerGroup} layers.`
+            : "Symbology applied.",
         },
       });
     } catch (err) {
@@ -550,32 +570,30 @@ export const useAppStore = create<AppState>((set, get) => ({
         symApplying: false,
         toast: {
           kind: "danger",
-          message: err instanceof Error ? err.message : "Could not apply symbology.",
+          message: err instanceof Error ? err.message : "Symbology apply failed.",
         },
       });
     }
   },
   resetSymbology: (group) => {
     const map = getMapController();
-    map?.resetRenderers(group);
-    if (group) {
-      set({ applied: { ...get().applied, [group]: null } });
-    } else {
-      set({ applied: { boundary: null, chart: null } });
-    }
-    set({ toast: { kind: "info", message: "Symbology restored to the web map default." } });
+    const target = group ?? get().symLayerGroup;
+    if (map) map.resetRenderer(target);
+    set({
+      applied: { ...get().applied, [target]: null },
+      symFieldsByGroup: { ...get().symFieldsByGroup, [target]: [] },
+      toast: { kind: "info", message: `${target} symbology reset.` },
+    });
   },
   zoomToLevel: async (level) => {
     const map = getMapController();
     if (!map) return;
-    await map.goToScale(getAdminLevel(level).viewScale);
-    set({ manualLevel: level });
+    await map.zoomToLevel(level);
   },
   zoomToName: async (name) => {
     const map = getMapController();
     if (!map) return;
-    const level = getAdminLevel(get().currentLevel());
-    await map.highlightAndZoom(level, name);
+    await map.zoomToName(get().currentLevel(), name);
   },
   clearRankingSelection: () => {
     getMapController()?.clearHighlight();
