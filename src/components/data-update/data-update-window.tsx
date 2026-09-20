@@ -1,11 +1,21 @@
 import { useEffect, useMemo, useState } from "react";
 import { createPortal } from "react-dom";
-import { INDICATOR_GROUPS, fieldsForGroups, labelForField } from "@/config/indicators";
+import {
+  INDICATOR_GROUPS,
+  labelForField,
+  type IndicatorField,
+  type IndicatorGroup,
+} from "@/config/indicators";
 import { ADMIN_LEVELS, type AdminLevelId } from "@/config/layers";
 import { applyCsvUpdates, type UpdateMode } from "@/lib/data-update/apply-csv-updates";
 import { parseCsvFile, type CsvTable } from "@/lib/data-update/csv";
 import { useAppStore } from "@/store/app-store";
 import { useUiStore } from "@/store/ui-store";
+
+type MainTab = "add" | "modify";
+type ModifyTab = "add_field" | "modify_field" | "modify_group";
+
+const CATALOG_KEY = "insight-hub-indicator-catalog-v1";
 
 function formatUnknownError(err: unknown): string {
   if (err instanceof Error && err.message) return err.message;
@@ -21,6 +31,34 @@ function formatUnknownError(err: unknown): string {
   return "Update failed. Check the CSV headers, field selection, and that the feature service allows editing.";
 }
 
+function loadCatalog(): IndicatorGroup[] {
+  try {
+    const raw = localStorage.getItem(CATALOG_KEY);
+    if (!raw) return INDICATOR_GROUPS.map((g) => ({ ...g, fields: [...g.fields] }));
+    const parsed = JSON.parse(raw) as IndicatorGroup[];
+    if (!Array.isArray(parsed) || !parsed.length) {
+      return INDICATOR_GROUPS.map((g) => ({ ...g, fields: [...g.fields] }));
+    }
+    return parsed;
+  } catch {
+    return INDICATOR_GROUPS.map((g) => ({ ...g, fields: [...g.fields] }));
+  }
+}
+
+function saveCatalog(groups: IndicatorGroup[]) {
+  try {
+    localStorage.setItem(CATALOG_KEY, JSON.stringify(groups));
+  } catch {
+    /* ignore */
+  }
+  try {
+    INDICATOR_GROUPS.length = 0;
+    for (const g of groups) INDICATOR_GROUPS.push(g);
+  } catch {
+    /* may be frozen */
+  }
+}
+
 export function DataUpdateWindow() {
   const open = useUiStore((s) => s.dataUpdateWindowOpen);
   const setOpen = useUiStore((s) => s.setDataUpdateWindowOpen);
@@ -28,20 +66,34 @@ export function DataUpdateWindow() {
   const showToast = useAppStore((s) => s.showToast);
   const refreshAnalytics = useAppStore((s) => s.refreshAnalytics);
 
-  const [levelId, setLevelId] = useState<AdminLevelId>("division");
-  const [groupIds, setGroupIds] = useState<string[]>(
-    INDICATOR_GROUPS[0] ? [INDICATOR_GROUPS[0].id] : [],
+  const [mainTab, setMainTab] = useState<MainTab>("add");
+  const [modifyTab, setModifyTab] = useState<ModifyTab>("modify_group");
+  const [catalog, setCatalog] = useState<IndicatorGroup[]>(() =>
+    typeof window !== "undefined" ? loadCatalog() : INDICATOR_GROUPS,
   );
+
+  const [levelId, setLevelId] = useState<AdminLevelId>("union");
+  const [browseGroupId, setBrowseGroupId] = useState<string>(INDICATOR_GROUPS[0]?.id ?? "");
   const [fieldIds, setFieldIds] = useState<string[]>([]);
   const [mode, setMode] = useState<UpdateMode>("append");
-  const [fileName, setFileName] = useState<string>("");
+  const [fileName, setFileName] = useState("");
   const [table, setTable] = useState<CsvTable | null>(null);
   const [busy, setBusy] = useState(false);
   const [fileInfo, setFileInfo] = useState<string | null>(null);
   const [resultMessage, setResultMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
-  const availableFields = useMemo(() => fieldsForGroups(groupIds), [groupIds]);
+  const [newGroupId, setNewGroupId] = useState("");
+  const [newGroupLabel, setNewGroupLabel] = useState("");
+  const [editGroupId, setEditGroupId] = useState<string>(catalog[0]?.id ?? "");
+
+  const [addFieldName, setAddFieldName] = useState("");
+  const [addFieldLabel, setAddFieldLabel] = useState("");
+  const [addFieldGroupId, setAddFieldGroupId] = useState(catalog[0]?.id ?? "");
+  const [addFieldType, setAddFieldType] = useState("Double");
+
+  const browseGroup = catalog.find((g) => g.id === browseGroupId) ?? catalog[0];
+  const browseFields = browseGroup?.fields ?? [];
 
   const selectedFieldLabels = useMemo(
     () => fieldIds.map((id) => labelForField(id)),
@@ -50,6 +102,7 @@ export function DataUpdateWindow() {
 
   useEffect(() => {
     if (!open) return;
+    setCatalog(loadCatalog());
     const onKey = (e: KeyboardEvent) => {
       if (e.key === "Escape" && !busy) setOpen(false);
     };
@@ -62,21 +115,11 @@ export function DataUpdateWindow() {
     };
   }, [open, setOpen, busy]);
 
-  useEffect(() => {
-    const allowed = new Set(availableFields.map((f) => f.id));
-    setFieldIds((prev) => prev.filter((id) => allowed.has(id)));
-  }, [availableFields]);
-
   if (!open) return null;
 
-  const toggleGroup = (id: string) => {
-    setGroupIds((prev) => {
-      if (prev.includes(id)) {
-        if (prev.length === 1) return prev;
-        return prev.filter((x) => x !== id);
-      }
-      return [...prev, id];
-    });
+  const persistCatalog = (next: IndicatorGroup[]) => {
+    setCatalog(next);
+    saveCatalog(next);
   };
 
   const toggleField = (id: string) => {
@@ -109,69 +152,139 @@ export function DataUpdateWindow() {
     }
   };
 
-  const run = async () => {
+  const runAddData = async () => {
     if (!table) {
       setError("Attach a CSV file first.");
-      setResultMessage(null);
       return;
     }
     if (!fieldIds.length) {
       setError("Select at least one indicator field.");
-      setResultMessage(null);
       return;
     }
     if (!mapReady) {
       setError("Wait until the web map finishes loading before running an update.");
-      setResultMessage(null);
       return;
     }
-
     setBusy(true);
     setError(null);
     setResultMessage(null);
-
     try {
-      const result = await applyCsvUpdates({
-        levelId,
-        fieldIds,
-        mode,
-        table,
-      });
-
+      const result = await applyCsvUpdates({ levelId, fieldIds, mode, table });
       const msg =
         result.message ||
         `Update finished. Matched ${result.matched}, updated ${result.updated}, skipped ${result.skipped}.`;
-
       setResultMessage(msg);
       showToast({ kind: "success", message: msg });
       void refreshAnalytics();
     } catch (err) {
       const msg = formatUnknownError(err);
       setError(msg);
-      setResultMessage(null);
       showToast({ kind: "danger", message: msg });
     } finally {
       setBusy(false);
     }
   };
 
-  const canRun = mapReady && !busy && Boolean(table) && fieldIds.length > 0;
+  const canRunAdd = mapReady && !busy && Boolean(table) && fieldIds.length > 0;
+
+  const createGroup = () => {
+    const id = newGroupId.trim() || newGroupLabel.trim().replace(/\s+/g, "_");
+    const label = newGroupLabel.trim() || id;
+    if (!id) {
+      setError("Enter a group id or label.");
+      return;
+    }
+    if (catalog.some((g) => g.id.toLowerCase() === id.toLowerCase())) {
+      setError(`Group "${id}" already exists.`);
+      return;
+    }
+    const next = [...catalog, { id, label, description: "", fields: [] as IndicatorField[] }];
+    persistCatalog(next);
+    setNewGroupId("");
+    setNewGroupLabel("");
+    setEditGroupId(id);
+    setError(null);
+    setResultMessage(`Indicator group "${label}" created.`);
+  };
+
+  const removeGroup = (id: string) => {
+    if (catalog.length <= 1) {
+      setError("Keep at least one indicator group.");
+      return;
+    }
+    const next = catalog.filter((g) => g.id !== id);
+    persistCatalog(next);
+    if (editGroupId === id) setEditGroupId(next[0]?.id ?? "");
+    setResultMessage(`Removed group "${id}".`);
+    setError(null);
+  };
+
+  const addFieldToGroup = () => {
+    const fid = (addFieldName.trim()).replace(/\s+/g, "_");
+    const flabel = (addFieldLabel.trim() || fid).trim();
+    const gid = addFieldGroupId || editGroupId || catalog[0]?.id;
+    if (!fid || !gid) {
+      setError("Field name and target group are required.");
+      return;
+    }
+    const next = catalog.map((g) => {
+      if (g.id !== gid) return g;
+      if (g.fields.some((f) => f.id.toLowerCase() === fid.toLowerCase())) return g;
+      return { ...g, fields: [...g.fields, { id: fid, label: flabel || fid }] };
+    });
+    persistCatalog(next);
+    setAddFieldName("");
+    setAddFieldLabel("");
+    setError(null);
+    setResultMessage(
+      `Field "${flabel}" assigned to group "${gid}". If the column is not on the feature service yet, add it with the Pro toolbox (Web Map Layer – Add Field), then load values via Add Data.`,
+    );
+  };
+
+  const moveField = (fieldId: string, fromGroup: string, toGroup: string) => {
+    if (fromGroup === toGroup) return;
+    let moved: IndicatorField | null = null;
+    const next = catalog.map((g) => {
+      if (g.id === fromGroup) {
+        const f = g.fields.find((x) => x.id === fieldId);
+        if (f) moved = f;
+        return { ...g, fields: g.fields.filter((x) => x.id !== fieldId) };
+      }
+      return g;
+    });
+    if (!moved) return;
+    const final = next.map((g) => {
+      if (g.id !== toGroup) return g;
+      if (g.fields.some((f) => f.id === fieldId)) return g;
+      return { ...g, fields: [...g.fields, moved!] };
+    });
+    persistCatalog(final);
+    setResultMessage(`Moved "${fieldId}" to "${toGroup}".`);
+  };
+
+  const removeFieldFromGroup = (groupId: string, fieldId: string) => {
+    const next = catalog.map((g) =>
+      g.id === groupId ? { ...g, fields: g.fields.filter((f) => f.id !== fieldId) } : g,
+    );
+    persistCatalog(next);
+    setResultMessage(`Removed "${fieldId}" from "${groupId}".`);
+  };
 
   const node = (
     <div className="analytics-modal-root" role="presentation">
       <button
         type="button"
         className="analytics-modal-backdrop"
-        aria-label="Close data update"
+        aria-label="Close manage data"
         onClick={() => {
           if (!busy) setOpen(false);
         }}
       />
-      <div className="data-update-modal" role="dialog" aria-modal="true" aria-label="Data update">
+      <div className="data-update-modal" role="dialog" aria-modal="true" aria-label="Manage Data">
         <header className="analytics-modal-header">
           <div className="panel-header-title">
-            <calcite-icon icon="upload" scale="s" />
-            <h2>Data update</h2>
+            <calcite-icon icon="table" scale="s" />
+            <h2>Manage Data</h2>
           </div>
           <button
             type="button"
@@ -184,208 +297,425 @@ export function DataUpdateWindow() {
           </button>
         </header>
 
-        {/* Scrollable form only — footer stays clear below */}
         <div className="data-update-body">
-          <p className="section-hint" style={{ marginTop: 0 }}>
-            Upload a CSV matching the feature layer schema. Select one or more indicator groups and
-            fields, then choose Append or Append and Replace.
-          </p>
+          <div className="seg" style={{ marginBottom: 12 }} role="tablist" aria-label="Manage Data sections">
+            <button
+              type="button"
+              className={mainTab === "add" ? "seg-btn seg-active" : "seg-btn"}
+              role="tab"
+              aria-selected={mainTab === "add"}
+              onClick={() => setMainTab("add")}
+            >
+              Add Data
+            </button>
+            <button
+              type="button"
+              className={mainTab === "modify" ? "seg-btn seg-active" : "seg-btn"}
+              role="tab"
+              aria-selected={mainTab === "modify"}
+              onClick={() => setMainTab("modify")}
+            >
+              Modify Data
+            </button>
+          </div>
 
-          <section>
-            <div className="section-head">
-              <h2>Administrative level</h2>
-            </div>
-            <div className="chip-row wrap" role="group" aria-label="Administrative level">
-              {ADMIN_LEVELS.map((level) => {
-                const on = levelId === level.id;
-                return (
-                  <button
-                    key={level.id}
-                    type="button"
-                    className={on ? "chip chip-active" : "chip"}
-                    aria-pressed={on}
-                    onClick={() => setLevelId(level.id)}
-                  >
-                    {level.label}
-                  </button>
-                );
-              })}
-            </div>
-          </section>
-
-          <section>
-            <div className="section-head">
-              <h2>Indicator groups</h2>
-              <span className="method-tag">{groupIds.length} selected</span>
-            </div>
-            <div className="chip-row wrap" role="group" aria-label="Indicator groups">
-              {INDICATOR_GROUPS.map((item) => {
-                const on = groupIds.includes(item.id);
-                return (
-                  <button
-                    key={item.id}
-                    type="button"
-                    className={on ? "chip chip-active" : "chip"}
-                    aria-pressed={on}
-                    onClick={() => toggleGroup(item.id)}
-                  >
-                    {item.label}
-                  </button>
-                );
-              })}
-            </div>
-            <p className="section-hint">Select one or more groups. Field picks are kept across groups.</p>
-          </section>
-
-          <section>
-            <div className="section-head">
-              <h2>Fields to update</h2>
-              <span className="method-tag">{fieldIds.length} selected</span>
-            </div>
-            {availableFields.length ? (
-              <ul className="check-list" role="listbox" aria-multiselectable="true">
-                {availableFields.map((field) => {
-                  const on = fieldIds.includes(field.id);
-                  return (
-                    <li key={field.id} role="option" aria-selected={on}>
-                      <label className={`check-list-item${on ? " is-selected" : ""}`}>
-                        <span className="check-list-box" aria-hidden="true">
-                          <input
-                            type="checkbox"
-                            checked={on}
-                            onChange={() => toggleField(field.id)}
-                          />
-                          <span className="check-list-box-ui">
-                            {on ? <calcite-icon icon="check" scale="s" /> : null}
-                          </span>
-                        </span>
-                        <span className="check-list-item-label">{field.label}</span>
-                      </label>
-                    </li>
-                  );
-                })}
-              </ul>
-            ) : (
-              <p className="empty-note">Select at least one indicator group.</p>
-            )}
-          </section>
-
-          <section>
-            <div className="section-head">
-              <h2>Selected fields</h2>
-            </div>
-            {fieldIds.length ? (
-              <div className="selected-fields-box" role="list" aria-label="Selected fields">
-                {fieldIds.map((id) => (
-                  <button
-                    key={id}
-                    type="button"
-                    className="selected-field-chip"
-                    role="listitem"
-                    title="Remove field"
-                    onClick={() => removeField(id)}
-                  >
-                    <span>{labelForField(id)}</span>
-                    <calcite-icon icon="x" scale="s" />
-                  </button>
-                ))}
-              </div>
-            ) : (
-              <p className="empty-note">No fields selected yet.</p>
-            )}
-            {selectedFieldLabels.length > 0 ? (
-              <p className="section-hint">
-                {selectedFieldLabels.length} field{selectedFieldLabels.length === 1 ? "" : "s"}:{" "}
-                {selectedFieldLabels.join(", ")}
+          {mainTab === "add" ? (
+            <>
+              <p className="section-hint" style={{ marginTop: 0 }}>
+                Load attribute values from a CSV. Select indicator fields like Smart Symbology (one
+                group at a time). Join uses the administrative name field for the chosen level.
               </p>
-            ) : null}
-          </section>
 
-          <section>
-            <div className="section-head">
-              <h2>Update mode</h2>
-            </div>
-            <div className="seg">
-              <button
-                type="button"
-                className={mode === "append" ? "seg-btn seg-active" : "seg-btn"}
-                onClick={() => setMode("append")}
-              >
-                Append
-              </button>
-              <button
-                type="button"
-                className={mode === "append_replace" ? "seg-btn seg-active" : "seg-btn"}
-                onClick={() => setMode("append_replace")}
-              >
-                Append and Replace
-              </button>
-            </div>
-            <p className="section-hint">
-              {mode === "append"
-                ? "Adds CSV values to existing attribute values for the selected fields."
-                : "Overwrites selected fields with CSV values (other fields unchanged)."}
-            </p>
-          </section>
+              <section>
+                <div className="section-head">
+                  <h2>Administrative level</h2>
+                </div>
+                <div className="chip-row wrap" role="group" aria-label="Administrative level">
+                  {ADMIN_LEVELS.map((level) => {
+                    const on = levelId === level.id;
+                    return (
+                      <button
+                        key={level.id}
+                        type="button"
+                        className={on ? "chip chip-active" : "chip"}
+                        aria-pressed={on}
+                        onClick={() => setLevelId(level.id)}
+                      >
+                        {level.label}
+                      </button>
+                    );
+                  })}
+                </div>
+              </section>
 
-          <section>
-            <div className="section-head">
-              <h2>CSV attachment</h2>
-            </div>
-            <label className="data-update-file">
-              <input
-                type="file"
-                accept=".csv,text/csv,text/plain"
-                onChange={(e) => void onFile(e.target.files?.[0] ?? null)}
-              />
-              <span className="chip">{fileName || "Choose CSV file…"}</span>
-            </label>
-            {fileInfo ? <p className="section-hint">{fileInfo}</p> : null}
-            {!mapReady ? (
-              <p className="section-hint">Wait until the web map finishes loading before running an update.</p>
-            ) : null}
-          </section>
+              <section>
+                <div className="section-head">
+                  <h2>Indicator group</h2>
+                </div>
+                <div className="chip-row wrap" role="group" aria-label="Indicator group">
+                  {catalog.map((item) => {
+                    const on = browseGroupId === item.id;
+                    return (
+                      <button
+                        key={item.id}
+                        type="button"
+                        className={on ? "chip chip-active" : "chip"}
+                        aria-pressed={on}
+                        onClick={() => setBrowseGroupId(item.id)}
+                      >
+                        {item.label}
+                      </button>
+                    );
+                  })}
+                </div>
+              </section>
+
+              <section>
+                <div className="section-head">
+                  <h2>Fields in group</h2>
+                  <span className="method-tag">{fieldIds.length} selected</span>
+                </div>
+                {browseFields.length ? (
+                  <ul className="check-list" role="listbox" aria-multiselectable="true">
+                    {browseFields.map((field) => {
+                      const on = fieldIds.includes(field.id);
+                      return (
+                        <li key={field.id} role="option" aria-selected={on}>
+                          <label className={`check-list-item${on ? " is-selected" : ""}`}>
+                            <span className="check-list-box" aria-hidden="true">
+                              <input
+                                type="checkbox"
+                                checked={on}
+                                onChange={() => toggleField(field.id)}
+                              />
+                              <span className="check-list-box-ui">
+                                {on ? <calcite-icon icon="check" scale="s" /> : null}
+                              </span>
+                            </span>
+                            <span className="check-list-item-label">{field.label}</span>
+                          </label>
+                        </li>
+                      );
+                    })}
+                  </ul>
+                ) : (
+                  <p className="empty-note">No fields in this group. Use Modify Data to add fields.</p>
+                )}
+              </section>
+
+              <section>
+                <div className="section-head">
+                  <h2>Selected fields</h2>
+                </div>
+                {fieldIds.length ? (
+                  <div className="selected-fields-box" role="list" aria-label="Selected fields">
+                    {fieldIds.map((id) => (
+                      <button
+                        key={id}
+                        type="button"
+                        className="selected-field-chip"
+                        role="listitem"
+                        title="Remove field"
+                        onClick={() => removeField(id)}
+                      >
+                        <span>{labelForField(id)}</span>
+                        <calcite-icon icon="x" scale="s" />
+                      </button>
+                    ))}
+                  </div>
+                ) : (
+                  <p className="empty-note">No fields selected yet.</p>
+                )}
+                {selectedFieldLabels.length > 0 ? (
+                  <p className="section-hint">
+                    {selectedFieldLabels.length} field
+                    {selectedFieldLabels.length === 1 ? "" : "s"}: {selectedFieldLabels.join(", ")}
+                  </p>
+                ) : null}
+              </section>
+
+              <section>
+                <div className="section-head">
+                  <h2>Update mode</h2>
+                </div>
+                <div className="seg">
+                  <button
+                    type="button"
+                    className={mode === "append" ? "seg-btn seg-active" : "seg-btn"}
+                    onClick={() => setMode("append")}
+                  >
+                    Append
+                  </button>
+                  <button
+                    type="button"
+                    className={mode === "append_replace" ? "seg-btn seg-active" : "seg-btn"}
+                    onClick={() => setMode("append_replace")}
+                  >
+                    Replace
+                  </button>
+                </div>
+                <p className="section-hint">
+                  {mode === "append"
+                    ? "Adds CSV values to existing attribute values for the selected fields."
+                    : "Overwrites selected fields with CSV values (other fields unchanged)."}
+                </p>
+              </section>
+
+              <section>
+                <div className="section-head">
+                  <h2>CSV attachment</h2>
+                </div>
+                <label className="data-update-file">
+                  <input
+                    type="file"
+                    accept=".csv,text/csv,text/plain"
+                    onChange={(e) => void onFile(e.target.files?.[0] ?? null)}
+                  />
+                  <span className="chip">{fileName || "Choose CSV file…"}</span>
+                </label>
+                {fileInfo ? <p className="section-hint">{fileInfo}</p> : null}
+              </section>
+            </>
+          ) : (
+            <>
+              <div className="seg" style={{ marginBottom: 12 }} role="tablist">
+                <button
+                  type="button"
+                  className={modifyTab === "add_field" ? "seg-btn seg-active" : "seg-btn"}
+                  onClick={() => setModifyTab("add_field")}
+                >
+                  Add field
+                </button>
+                <button
+                  type="button"
+                  className={modifyTab === "modify_field" ? "seg-btn seg-active" : "seg-btn"}
+                  onClick={() => setModifyTab("modify_field")}
+                >
+                  Modify field
+                </button>
+                <button
+                  type="button"
+                  className={modifyTab === "modify_group" ? "seg-btn seg-active" : "seg-btn"}
+                  onClick={() => setModifyTab("modify_group")}
+                >
+                  Indicator groups
+                </button>
+              </div>
+
+              {modifyTab === "add_field" ? (
+                <section>
+                  <p className="section-hint" style={{ marginTop: 0 }}>
+                    Register a field in the dashboard catalog and assign it to a group. Creating the
+                    column on the hosted service requires admin rights (use the Pro toolbox{" "}
+                    <strong>Web Map Layer – Add Field(s)</strong>). Then load Union-level CSV via Add
+                    Data.
+                  </p>
+                  <label className="section-hint" style={{ display: "block", marginBottom: 6 }}>
+                    Field name
+                    <input
+                      style={{ display: "block", width: "100%", marginTop: 4, padding: "6px 8px" }}
+                      value={addFieldName}
+                      onChange={(e) => setAddFieldName(e.target.value)}
+                      placeholder="e.g. New_Indicator"
+                    />
+                  </label>
+                  <label className="section-hint" style={{ display: "block", marginBottom: 6 }}>
+                    Display label
+                    <input
+                      style={{ display: "block", width: "100%", marginTop: 4, padding: "6px 8px" }}
+                      value={addFieldLabel}
+                      onChange={(e) => setAddFieldLabel(e.target.value)}
+                      placeholder="e.g. New Indicator"
+                    />
+                  </label>
+                  <label className="section-hint" style={{ display: "block", marginBottom: 6 }}>
+                    Field type (for Pro tool)
+                    <select
+                      style={{ display: "block", width: "100%", marginTop: 4, padding: "6px 8px" }}
+                      value={addFieldType}
+                      onChange={(e) => setAddFieldType(e.target.value)}
+                    >
+                      {["Double", "Integer", "Text", "Date", "SmallInteger", "BigInteger"].map(
+                        (t) => (
+                          <option key={t} value={t}>
+                            {t}
+                          </option>
+                        ),
+                      )}
+                    </select>
+                  </label>
+                  <label className="section-hint" style={{ display: "block", marginBottom: 8 }}>
+                    Indicator group
+                    <select
+                      style={{ display: "block", width: "100%", marginTop: 4, padding: "6px 8px" }}
+                      value={addFieldGroupId}
+                      onChange={(e) => setAddFieldGroupId(e.target.value)}
+                    >
+                      {catalog.map((g) => (
+                        <option key={g.id} value={g.id}>
+                          {g.label}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  <button type="button" className="data-update-run-btn" onClick={addFieldToGroup}>
+                    Add field to catalog
+                  </button>
+                </section>
+              ) : null}
+
+              {modifyTab === "modify_field" ? (
+                <section>
+                  <p className="section-hint" style={{ marginTop: 0 }}>
+                    Move fields between groups or remove them from the catalog (does not delete
+                    service columns).
+                  </p>
+                  {catalog.map((g) => (
+                    <div key={g.id} style={{ marginBottom: 12 }}>
+                      <div className="section-head">
+                        <h2>{g.label}</h2>
+                        <span className="method-tag">{g.fields.length}</span>
+                      </div>
+                      {g.fields.length ? (
+                        <div className="selected-fields-box" role="list">
+                          {g.fields.map((f) => (
+                            <div
+                              key={f.id}
+                              className="selected-field-chip"
+                              style={{ cursor: "default", gap: 6 }}
+                              role="listitem"
+                            >
+                              <span>{f.label}</span>
+                              <select
+                                aria-label={`Move ${f.label}`}
+                                style={{ fontSize: 11, maxWidth: 120 }}
+                                value={g.id}
+                                onChange={(e) => moveField(f.id, g.id, e.target.value)}
+                              >
+                                {catalog.map((tg) => (
+                                  <option key={tg.id} value={tg.id}>
+                                    {tg.label}
+                                  </option>
+                                ))}
+                              </select>
+                              <button
+                                type="button"
+                                title="Remove from group"
+                                onClick={() => removeFieldFromGroup(g.id, f.id)}
+                                style={{
+                                  border: "none",
+                                  background: "transparent",
+                                  cursor: "pointer",
+                                }}
+                              >
+                                <calcite-icon icon="x" scale="s" />
+                              </button>
+                            </div>
+                          ))}
+                        </div>
+                      ) : (
+                        <p className="empty-note">No fields in this group.</p>
+                      )}
+                    </div>
+                  ))}
+                </section>
+              ) : null}
+
+              {modifyTab === "modify_group" ? (
+                <section>
+                  <p className="section-hint" style={{ marginTop: 0 }}>
+                    Create or remove indicator groups used by Smart Symbology, Analytics, and Add
+                    Data.
+                  </p>
+                  <div className="section-head">
+                    <h2>Existing groups</h2>
+                  </div>
+                  <div className="selected-fields-box" role="list">
+                    {catalog.map((g) => (
+                      <button
+                        key={g.id}
+                        type="button"
+                        className="selected-field-chip"
+                        role="listitem"
+                        title="Remove group"
+                        onClick={() => removeGroup(g.id)}
+                      >
+                        <span>
+                          {g.label} ({g.fields.length})
+                        </span>
+                        <calcite-icon icon="x" scale="s" />
+                      </button>
+                    ))}
+                  </div>
+                  <div className="section-head" style={{ marginTop: 12 }}>
+                    <h2>New group</h2>
+                  </div>
+                  <label className="section-hint" style={{ display: "block", marginBottom: 6 }}>
+                    Group id
+                    <input
+                      style={{ display: "block", width: "100%", marginTop: 4, padding: "6px 8px" }}
+                      value={newGroupId}
+                      onChange={(e) => setNewGroupId(e.target.value)}
+                      placeholder="e.g. Health"
+                    />
+                  </label>
+                  <label className="section-hint" style={{ display: "block", marginBottom: 8 }}>
+                    Label
+                    <input
+                      style={{ display: "block", width: "100%", marginTop: 4, padding: "6px 8px" }}
+                      value={newGroupLabel}
+                      onChange={(e) => setNewGroupLabel(e.target.value)}
+                      placeholder="e.g. Health"
+                    />
+                  </label>
+                  <button type="button" className="data-update-run-btn" onClick={createGroup}>
+                    Create group
+                  </button>
+                </section>
+              ) : null}
+            </>
+          )}
         </div>
 
-        {/* Solid footer — never covered by scroll content */}
         <footer className="data-update-footer">
           <div className="data-update-result" aria-live="polite">
             {busy ? (
               <div className="data-update-banner data-update-banner--info" role="status">
-                <strong>Running update…</strong>
+                <strong>Running…</strong>
                 <span>Matching features and writing attributes. Please wait.</span>
               </div>
             ) : null}
             {!busy && resultMessage ? (
               <div className="data-update-banner data-update-banner--success" role="status">
-                <strong>Update completed</strong>
+                <strong>Completed</strong>
                 <span>{resultMessage}</span>
               </div>
             ) : null}
             {!busy && error ? (
               <div className="data-update-banner data-update-banner--danger" role="alert">
-                <strong>Update failed</strong>
+                <strong>Error</strong>
                 <span>{error}</span>
               </div>
             ) : null}
           </div>
-
           <div className="data-update-actions">
-            <button
-              type="button"
-              className="data-update-run-btn"
-              disabled={!canRun}
-              onClick={() => void run()}
-            >
-              {busy ? "Running…" : "Run update"}
-            </button>
+            {mainTab === "add" ? (
+              <button
+                type="button"
+                className="data-update-run-btn"
+                disabled={!canRunAdd}
+                onClick={() => void runAddData()}
+              >
+                {busy ? "Running…" : "Run Add Data"}
+              </button>
+            ) : null}
             <button
               type="button"
               className="data-update-cancel-btn"
               disabled={busy}
               onClick={() => setOpen(false)}
             >
-              Cancel
+              Close
             </button>
           </div>
         </footer>
