@@ -234,9 +234,9 @@ export function SymbologyPanel() {
           </div>
         </section>
 
-        <div className="method-banner">
-          <span>Symbology Style</span>
-          <strong>
+        <div className="method-banner" role="status" aria-live="polite">
+          <span className="method-banner-label">Symbology Style</span>
+          <strong className="method-banner-value">
             {method}
             {useScale ? " · Scale" : ""}
           </strong>
