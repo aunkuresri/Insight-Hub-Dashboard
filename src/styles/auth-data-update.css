@@ -464,9 +464,28 @@
 
 /* ---- Manage Data form layout (production) ---- */
 
-.data-update-maintabs,
+.data-update-maintabs {
+  display: inline-flex;
+  width: auto;
+  max-width: 100%;
+  margin: 0 0 10px;
+  flex-shrink: 0;
+}
+
 .data-update-subtabs {
-  margin-bottom: 4px;
+  display: inline-flex;
+  width: auto;
+  max-width: 100%;
+  margin: 0 0 10px;
+  flex-shrink: 0;
+}
+
+.data-update-maintabs .seg-btn,
+.data-update-subtabs .seg-btn {
+  min-width: 96px;
+  height: 32px;
+  font-size: 12px;
+  font-weight: 600;
 }
 
 .data-update-card {
@@ -620,4 +639,16 @@
 
 .data-update-modal {
   width: min(600px, 96vw);
+}
+
+
+/* Modal chrome aligned with panel headers */
+.data-update-modal .analytics-modal-header,
+.analytics-modal-root .analytics-modal-header {
+  background: #ffffff;
+  border-bottom: 1px solid rgb(0 0 0 / 0.1);
+}
+
+.data-update-body {
+  background: #ffffff;
 }
