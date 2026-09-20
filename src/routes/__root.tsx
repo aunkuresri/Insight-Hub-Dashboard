@@ -3,7 +3,7 @@ import { AuthProvider } from "@/lib/auth/provider";
 import { PreviewHostBridge } from "@/components/preview-host-bridge";
 import appCss from "../styles.css?url";
 
-const APP_NAME = "Crime Analysis Platform";
+const APP_NAME = "Insight Hub Dashboard";
 
 export const Route = createRootRoute({
   head: () => ({
@@ -15,7 +15,7 @@ export const Route = createRootRoute({
       {
         name: "description",
         content:
-          "Bangladesh administrative crime intelligence: map filters, analytics, and on-the-fly bivariate, ternary and chart symbology.",
+          "Bangladesh administrative intelligence: map filters, analytics, and on-the-fly bivariate, ternary and chart symbology.",
       },
     ],
     links: [

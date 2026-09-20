@@ -10,7 +10,7 @@ export const APP_CONFIG = {
   webmapId: "f5a07bf1c93346968dfdde7699ab43c8",
   /** Set a registered OAuth app id to enable IdentityManager. Leave blank for public web maps. */
   oauthAppId: "",
-  title: "Insight Hub Platform",
+  title: "Insight Hub Dashboard",
   subtitle: "Bangladesh Administrative Intelligence",
   /** Optional kicker above the title; leave empty to hide. */
   orgLabel: "",

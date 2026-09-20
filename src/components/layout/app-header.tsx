@@ -15,7 +15,7 @@ export function AppHeader() {
         <img
           className="brand-logo"
           src="/favicon.svg"
-          alt="Insight Hub Platform"
+          alt="Insight Hub Dashboard"
           width={40}
           height={40}
         />
