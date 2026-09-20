@@ -23,7 +23,7 @@
   --color-warn: #d19a00;
   --color-border: rgb(0 0 0 / 0.1);
   --color-border-strong: rgb(0 0 0 / 0.18);
-  --color-header: #e8f4fc;
+  --color-header: #ffffff;
 
   --chart-1: #0079c1;
   --chart-2: #35ac46;
@@ -111,7 +111,7 @@
   align-items: center;
   padding: 0 16px;
   background: var(--color-header);
-  border-bottom: 2px solid var(--color-accent);
+  border-bottom: 1px solid rgb(0 0 0 / 0.12);
   box-shadow: none;
 }
 
@@ -651,4 +651,47 @@
   .workspace {
     grid-template-columns: minmax(0, 1fr) !important;
   }
+}
+
+
+/* Symbology method summary — prevents label/value run-on */
+.method-banner {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 4px 8px;
+  padding: 8px 10px;
+  border: 1px solid var(--color-border);
+  border-radius: 4px;
+  background: #f4f6f8;
+  font-size: 12px;
+  line-height: 1.35;
+}
+
+.method-banner-label {
+  color: var(--color-muted, #6a6a6a);
+  font-weight: 500;
+  flex: 0 0 auto;
+}
+
+.method-banner-label::after {
+  content: ":";
+  margin-right: 2px;
+}
+
+.method-banner-value {
+  color: var(--color-fg, #151515);
+  font-weight: 600;
+  min-width: 0;
+}
+
+.action-row {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 4px;
+}
+
+.action-row calcite-button {
+  width: 100%;
 }
