@@ -33,12 +33,12 @@ export function AppHeader() {
           <button
             type="button"
             className="header-menu-btn"
-            title="Add Data"
-            aria-label="Add Data"
+            title="Manage Data"
+            aria-label="Manage Data"
             onClick={() => setDataUpdateOpen(true)}
           >
-            <calcite-icon icon="upload" scale="s" />
-            <span>Add Data</span>
+            <calcite-icon icon="table" scale="s" />
+            <span>Manage Data</span>
           </button>
           {authEnabled ? (
             <div className="header-user">
