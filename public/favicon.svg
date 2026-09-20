@@ -1,0 +1,26 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="Insight Hub Platform">
+  <defs>
+    <linearGradient id="tile" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#2b6cb0"/>
+      <stop offset="100%" stop-color="#1a365d"/>
+    </linearGradient>
+  </defs>
+  <!-- Rounded analytics tile -->
+  <rect x="4" y="4" width="56" height="56" rx="12" ry="12" fill="url(#tile)"/>
+  <!-- Subtle inner frame -->
+  <rect x="8" y="8" width="48" height="48" rx="9" ry="9" fill="none" stroke="#90cdf4" stroke-width="1.25" opacity="0.55"/>
+  <!-- Analytics bars -->
+  <rect x="16" y="34" width="8" height="14" rx="2" fill="#ebf8ff" opacity="0.92"/>
+  <rect x="28" y="26" width="8" height="22" rx="2" fill="#ebf8ff"/>
+  <rect x="40" y="16" width="8" height="32" rx="2" fill="#bee3f8"/>
+  <!-- Trend line -->
+  <path
+    d="M17 36 L24 30 L36 24 L48 14"
+    fill="none"
+    stroke="#ffffff"
+    stroke-width="2.25"
+    stroke-linecap="round"
+    stroke-linejoin="round"
+  />
+  <circle cx="48" cy="14" r="2.75" fill="#ffffff"/>
+</svg>

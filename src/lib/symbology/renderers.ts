@@ -1,0 +1,530 @@
+/**
+ * Client-side renderer JSON builders.
+ *
+ * Output is Esri REST renderer JSON so it can be applied with
+ * `jsonUtils.fromJSON` — no published geoprocessing tool required.
+ */
+
+import {
+  BIVARIATE_SCHEMES,
+  CHART_PALETTES,
+  CHOROPLETH_RAMPS,
+  QUALITATIVE_BRIGHT,
+  QUALITATIVE_MUTED,
+  SINGLE_SYMBOL_COLORS,
+  bivariatePalette,
+  blendTernary,
+  resolveScheme,
+  type RGB,
+} from "@/config/symbology-schemes";
+import { minMax, numericValues, quantizeTernary, quantileBreaks, safeNumber } from "@/lib/gis/stats";
+import { arcadeField, arcadeNumber, chartTotalExpression, sizeFieldExpression } from "@/lib/symbology/arcade";
+
+export type EsriRenderer = Record<string, unknown>;
+
+export type LegendClass = {
+  label: string;
+  color: RGB;
+  value?: string;
+};
+
+export type AppliedLegend = {
+  method: string;
+  scheme: string;
+  title: string;
+  fields: Array<{ id: string; name: string; label: string }>;
+  colors: Record<string, RGB>;
+  classes: LegendClass[];
+  size?: { min: number; max: number; title: string };
+  ternary?: { a: string; b: string; c: string; scheme: string };
+  bivariate?: { xLabel: string; yLabel: string; palette: Record<string, RGB> };
+};
+
+export type BuildResult = {
+  renderer: EsriRenderer;
+  legend: AppliedLegend;
+};
+
+type Row = Record<string, unknown>;
+
+function polygonSymbol(rgb: RGB, alpha = 220) {
+  return {
+    type: "esriSFS",
+    style: "esriSFSSolid",
+    color: [rgb[0], rgb[1], rgb[2], alpha],
+    outline: {
+      type: "esriSLS",
+      style: "esriSLSSolid",
+      color: [90, 90, 90, 150],
+      width: 0.6,
+    },
+  };
+}
+
+function defaultSymbol() {
+  return polygonSymbol([190, 190, 190]);
+}
+
+function methodForBoundary(fieldCount: number): string {
+  if (fieldCount <= 1) return "Quantile choropleth";
+  if (fieldCount === 2) return "Bivariate Colors (3 x 3)";
+  if (fieldCount === 3) return "Ternary / Triangular Composition";
+  return "Predominant Variable";
+}
+
+export function describeMethod(layerGroup: "boundary" | "chart", fieldCount: number): string {
+  if (layerGroup === "chart") return "Pie Chart + Data-Driven Size";
+  return methodForBoundary(fieldCount);
+}
+
+export function buildChartRenderer(args: {
+  rows: Row[];
+  fields: string[];
+  aliases: Record<string, string>;
+  requestedScheme: string;
+  sizeField?: string | null;
+  sizeLabel?: string | null;
+}): BuildResult {
+  const { rows, fields, aliases, requestedScheme, sizeField, sizeLabel } = args;
+  const palette = CHART_PALETTES[requestedScheme] ?? CHART_PALETTES.Auto;
+  const attributes = fields.map((field, index) => {
+    const rgb = palette[index % palette.length]!;
+    return {
+      field,
+      label: aliases[field] ?? field,
+      color: [rgb[0], rgb[1], rgb[2], 255],
+    };
+  });
+
+  const sizeValues: number[] = [];
+  for (const row of rows) {
+    if (sizeField) {
+      const n = safeNumber(row[sizeField]);
+      sizeValues.push(n != null ? Math.max(0, n) : 0);
+    } else {
+      let total = 0;
+      for (const field of fields) {
+        const n = safeNumber(row[field]);
+        if (n != null) total += Math.max(0, n);
+      }
+      sizeValues.push(total);
+    }
+  }
+  const valid = sizeValues.filter((v) => v != null);
+  const extent = valid.length ? { min: Math.min(...valid), max: Math.max(...valid) } : { min: 0, max: 1 };
+  let minDataValue = extent.min;
+  let maxDataValue = extent.max;
+  if (maxDataValue <= 0) {
+    minDataValue = 0;
+    maxDataValue = 1;
+  } else if (minDataValue === maxDataValue) {
+    minDataValue = 0;
+  }
+
+  const valueExpression = sizeField ? sizeFieldExpression(sizeField) : chartTotalExpression(fields);
+  const sizeTitle = sizeField ? (sizeLabel || sizeField) : "Total selected indicators";
+
+  const renderer: EsriRenderer = {
+    type: "pieChart",
+    attributes,
+    size: 24,
+    holePercentage: 0,
+    outline: {
+      type: "esriSLS",
+      style: "esriSLSSolid",
+      color: [65, 65, 65, 220],
+      width: 0.6,
+    },
+    defaultColor: [0, 0, 0, 0],
+    defaultLabel: "No data",
+    legendOptions: { title: "Selected indicators" },
+    visualVariables: [
+      {
+        type: "sizeInfo",
+        valueExpression,
+        valueExpressionTitle: sizeTitle,
+        minDataValue,
+        maxDataValue,
+        minSize: 12,
+        maxSize: 48,
+      },
+    ],
+    backgroundFillSymbol: {
+      type: "esriSFS",
+      style: "esriSFSSolid",
+      color: [0, 0, 0, 0],
+      outline: {
+        type: "esriSLS",
+        style: "esriSLSNull",
+        color: [0, 0, 0, 0],
+        width: 0,
+      },
+    },
+  };
+
+  return {
+    renderer,
+    legend: {
+      method: "Pie Chart + Data-Driven Size",
+      scheme: requestedScheme,
+      title: "Selected indicators",
+      fields: fields.map((name) => ({ id: name, name, label: aliases[name] ?? name })),
+      colors: Object.fromEntries(
+        attributes.map((a) => [a.field, [a.color[0], a.color[1], a.color[2]] as RGB]),
+      ),
+      classes: attributes.map((a) => ({
+        label: a.label,
+        color: [a.color[0], a.color[1], a.color[2]] as RGB,
+        value: a.field,
+      })),
+      size: { min: minDataValue, max: maxDataValue, title: sizeTitle },
+    },
+  };
+}
+
+export function buildBoundaryRenderer(args: {
+  rows: Row[];
+  fields: string[];
+  aliases: Record<string, string>;
+  requestedScheme: string;
+}): BuildResult {
+  const { rows, fields, aliases, requestedScheme } = args;
+  if (fields.length <= 1) return buildChoropleth({ rows, field: fields[0]!, aliases, requestedScheme });
+  if (fields.length === 2) {
+    return buildBivariate({
+      rows,
+      fieldX: fields[0]!,
+      fieldY: fields[1]!,
+      aliases,
+      requestedScheme,
+    });
+  }
+  if (fields.length === 3) return buildTernary({ rows, fields, aliases, requestedScheme });
+  return buildPredominance({ rows, fields, aliases, requestedScheme });
+}
+
+function buildChoropleth(args: {
+  rows: Row[];
+  field: string;
+  aliases: Record<string, string>;
+  requestedScheme: string;
+}): BuildResult {
+  const { rows, field, aliases, requestedScheme } = args;
+  const values = numericValues(rows, field);
+  const ramp = CHOROPLETH_RAMPS[requestedScheme] ?? CHOROPLETH_RAMPS.Auto;
+  const label = aliases[field] ?? field;
+
+  if (values.length < 2 || values[0] === values[values.length - 1]) {
+    const rgb = SINGLE_SYMBOL_COLORS[requestedScheme] ?? SINGLE_SYMBOL_COLORS.Auto;
+    return {
+      renderer: {
+        type: "simple",
+        label,
+        symbol: polygonSymbol(rgb),
+      },
+      legend: {
+        method: "Quantile choropleth",
+        scheme: requestedScheme,
+        title: label,
+        fields: [{ id: field, name: field, label }],
+        colors: { fill: rgb },
+        classes: [{ label, color: rgb }],
+      },
+    };
+  }
+
+  const classCount = Math.min(5, ramp.length);
+  const breaks = quantileBreaks(values, classCount);
+  const edges = [values[0]!, ...breaks, values[values.length - 1]!];
+  const infos: Array<Record<string, unknown>> = [];
+  const classes: LegendClass[] = [];
+
+  for (let i = 0; i < classCount; i += 1) {
+    const minV = i === 0 ? edges[0]! : edges[i]!;
+    const maxV = edges[i + 1]!;
+    const rgb = ramp[i]!;
+    const classLabel =
+      i === 0
+        ? `≤ ${formatBreak(maxV)}`
+        : i === classCount - 1
+          ? `> ${formatBreak(minV)}`
+          : `${formatBreak(minV)} – ${formatBreak(maxV)}`;
+    infos.push({
+      classMinValue: i === 0 ? minV : minV,
+      classMaxValue: maxV,
+      label: classLabel,
+      symbol: polygonSymbol(rgb),
+    });
+    classes.push({ label: classLabel, color: rgb });
+  }
+
+  return {
+    renderer: {
+      type: "classBreaks",
+      field,
+      classificationMethod: "esriClassifyQuantile",
+      minValue: values[0],
+      classBreakInfos: infos,
+      defaultSymbol: defaultSymbol(),
+      defaultLabel: "No data",
+      legendOptions: { title: label },
+    },
+    legend: {
+      method: "Quantile choropleth",
+      scheme: requestedScheme,
+      title: label,
+      fields: [{ id: field, name: field, label }],
+      colors: Object.fromEntries(classes.map((c, i) => [`c${i}`, c.color])),
+      classes,
+    },
+  };
+}
+
+function formatBreak(n: number): string {
+  if (Math.abs(n) >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
+  if (Math.abs(n) >= 10_000) return `${Math.round(n / 1000)}K`;
+  if (Number.isInteger(n)) return n.toLocaleString("en-US");
+  return n.toLocaleString("en-US", { maximumFractionDigits: 1 });
+}
+
+function buildBivariate(args: {
+  rows: Row[];
+  fieldX: string;
+  fieldY: string;
+  aliases: Record<string, string>;
+  requestedScheme: string;
+}): BuildResult {
+  const { rows, fieldX, fieldY, aliases, requestedScheme } = args;
+  const valuesX = numericValues(rows, fieldX);
+  const valuesY = numericValues(rows, fieldY);
+  if (!valuesX.length || !valuesY.length) {
+    throw new Error("Both bivariate fields require numeric values.");
+  }
+  const breaksX = quantileBreaks(valuesX, 3);
+  const breaksY = quantileBreaks(valuesY, 3);
+  if (breaksX.length < 2 || breaksY.length < 2) {
+    throw new Error("Insufficient numeric variation for 3 × 3 bivariate symbology.");
+  }
+  const scheme = resolveScheme(requestedScheme, "Bivariate Colors (3 x 3)");
+  const palette = bivariatePalette(scheme);
+  const levels: Record<number, string> = { 1: "Low", 2: "Medium", 3: "High" };
+  const labelX = aliases[fieldX] ?? fieldX;
+  const labelY = aliases[fieldY] ?? fieldY;
+
+  const expression =
+    `var x=${arcadeField(fieldX)}; var y=${arcadeField(fieldY)}; ` +
+    `if(IsEmpty(x)||IsEmpty(y)){return '__NODATA__';} ` +
+    `var xc=When(x<=${arcadeNumber(breaksX[0]!)},1,x<=${arcadeNumber(breaksX[1]!)},2,3); ` +
+    `var yc=When(y<=${arcadeNumber(breaksY[0]!)},1,y<=${arcadeNumber(breaksY[1]!)},2,3); ` +
+    `return Text(xc)+'_'+Text(yc);`;
+
+  const infos: Array<Record<string, unknown>> = [];
+  const classes: LegendClass[] = [];
+  for (let yClass = 1; yClass <= 3; yClass += 1) {
+    for (let xClass = 1; xClass <= 3; xClass += 1) {
+      const code = `${xClass}_${yClass}`;
+      const rgb = palette[code]!;
+      const label = `${labelX} ${levels[xClass]} / ${labelY} ${levels[yClass]}`;
+      infos.push({
+        value: code,
+        label,
+        description: "",
+        symbol: polygonSymbol(rgb),
+      });
+      classes.push({ label, color: rgb, value: code });
+    }
+  }
+
+  const title = `${labelX} × ${labelY}`;
+  return {
+    renderer: {
+      type: "uniqueValue",
+      valueExpression: expression,
+      valueExpressionTitle: title,
+      legendOptions: { title },
+      defaultLabel: "No data / Other",
+      defaultSymbol: defaultSymbol(),
+      uniqueValueInfos: infos,
+    },
+    legend: {
+      method: "Bivariate Colors (3 x 3)",
+      scheme,
+      title,
+      fields: [
+        { id: fieldX, name: fieldX, label: labelX },
+        { id: fieldY, name: fieldY, label: labelY },
+      ],
+      colors: palette,
+      classes,
+      bivariate: { xLabel: labelX, yLabel: labelY, palette },
+    },
+  };
+}
+
+function buildTernary(args: {
+  rows: Row[];
+  fields: string[];
+  aliases: Record<string, string>;
+  requestedScheme: string;
+}): BuildResult {
+  const { rows, fields, aliases, requestedScheme } = args;
+  const resolution = 10;
+  const scheme = resolveScheme(requestedScheme, "Ternary / Triangular Composition");
+  const observed = new Set<string>();
+
+  for (const row of rows) {
+    const values = fields.map((f) => safeNumber(row[f]));
+    if (values.some((v) => v == null)) continue;
+    const cleaned = values.map((v) => Math.max(0, v!));
+    const total = cleaned.reduce((s, v) => s + v, 0);
+    if (total <= 0) continue;
+    const shares = cleaned.map((v) => v / total);
+    const [qa, qb, qc] = quantizeTernary(shares, resolution);
+    observed.add(`A${String(qa).padStart(2, "0")}_B${String(qb).padStart(2, "0")}_C${String(qc).padStart(2, "0")}`);
+  }
+  if (!observed.size) throw new Error("No valid ternary combinations were found.");
+
+  const a = arcadeField(fields[0]!);
+  const b = arcadeField(fields[1]!);
+  const c = arcadeField(fields[2]!);
+  const r = resolution;
+  const expression =
+    `var a=${a};var b=${b};var c=${c};` +
+    `if(IsEmpty(a)||IsEmpty(b)||IsEmpty(c)){return '__NODATA__';}` +
+    `a=Max(a,0);b=Max(b,0);c=Max(c,0);` +
+    `var t=a+b+c;if(t<=0){return '__NODATA__';}` +
+    `var ra=(a/t)*${r};var rb=(b/t)*${r};var rc=(c/t)*${r};` +
+    `var qa=Floor(ra);var qb=Floor(rb);var qc=Floor(rc);` +
+    `var fa=ra-qa;var fb=rb-qb;var fc=rc-qc;` +
+    `var rem=${r}-(qa+qb+qc);` +
+    `if(rem>=1){if(fa>=fb&&fa>=fc){qa+=1;fa=-1;}else if(fb>=fa&&fb>=fc){qb+=1;fb=-1;}else{qc+=1;fc=-1;}}` +
+    `if(rem>=2){if(fa>=fb&&fa>=fc){qa+=1;}else if(fb>=fa&&fb>=fc){qb+=1;}else{qc+=1;}}` +
+    `return 'A'+Text(qa,'00')+'_B'+Text(qb,'00')+'_C'+Text(qc,'00');`;
+
+  const labels = fields.map((f) => aliases[f] ?? f);
+  const infos: Array<Record<string, unknown>> = [];
+  const classes: LegendClass[] = [];
+  const pattern = /^A(\d+)_B(\d+)_C(\d+)$/;
+
+  for (const code of [...observed].sort()) {
+    const match = pattern.exec(code);
+    if (!match) continue;
+    const qa = Number(match[1]);
+    const qb = Number(match[2]);
+    const qc = Number(match[3]);
+    const total = Math.max(1, qa + qb + qc);
+    const shareA = qa / total;
+    const shareB = qb / total;
+    const shareC = qc / total;
+    const rgb = blendTernary(shareA, shareB, shareC, scheme);
+    const label = `${labels[0]} ${Math.round(shareA * 100)}% / ${labels[1]} ${Math.round(shareB * 100)}% / ${labels[2]} ${Math.round(shareC * 100)}%`;
+    infos.push({ value: code, label, description: "", symbol: polygonSymbol(rgb) });
+    classes.push({ label, color: rgb, value: code });
+  }
+
+  const title = `Ternary: ${labels.join(" / ")}`;
+  return {
+    renderer: {
+      type: "uniqueValue",
+      valueExpression: expression,
+      valueExpressionTitle: title,
+      legendOptions: { title },
+      defaultLabel: "No data / Other",
+      defaultSymbol: defaultSymbol(),
+      uniqueValueInfos: infos,
+    },
+    legend: {
+      method: "Ternary / Triangular Composition",
+      scheme,
+      title,
+      fields: fields.map((name, i) => ({ id: name, name, label: labels[i]! })),
+      colors: Object.fromEntries(classes.map((c) => [c.value ?? c.label, c.color])),
+      classes,
+      ternary: { a: labels[0]!, b: labels[1]!, c: labels[2]!, scheme },
+    },
+  };
+}
+
+function buildPredominance(args: {
+  rows: Row[];
+  fields: string[];
+  aliases: Record<string, string>;
+  requestedScheme: string;
+}): BuildResult {
+  const { rows, fields, aliases, requestedScheme } = args;
+  const scheme = resolveScheme(requestedScheme, "Predominant Variable");
+  const palette = scheme === "Qualitative - Muted" ? QUALITATIVE_MUTED : QUALITATIVE_BRIGHT;
+  const observed = new Set<string>();
+
+  for (const row of rows) {
+    const cleaned = fields.map((f) => {
+      const n = safeNumber(row[f]);
+      return n == null ? 0 : Math.max(0, n);
+    });
+    const total = cleaned.reduce((s, v) => s + v, 0);
+    if (total <= 0) continue;
+    let best = 0;
+    for (let i = 1; i < cleaned.length; i += 1) {
+      if (cleaned[i]! > cleaned[best]!) best = i;
+    }
+    observed.add(fields[best]!);
+  }
+
+  const declarations = fields
+    .map((field, index) => {
+      return (
+        `var v${index}=${arcadeField(field)};` +
+        `if(IsEmpty(v${index})){v${index}=0;}` +
+        `v${index}=Max(v${index},0);`
+      );
+    })
+    .join("");
+  const totalExpression = fields.map((_, i) => `v${i}`).join("+");
+  const tests = fields
+    .map((field, index) => {
+      const conditions = fields
+        .map((_, other) => {
+          if (other === index) return null;
+          const operator = index < other ? ">=" : ">";
+          return `v${index}${operator}v${other}`;
+        })
+        .filter(Boolean)
+        .join("&&");
+      return `if(${conditions || "true"}){return "${field.replaceAll('"', '\\"')}";}`;
+    })
+    .join("");
+  const expression =
+    `${declarations}var total=${totalExpression};if(total<=0){return '__NODATA__';}${tests}return '__NODATA__';`;
+
+  const infos: Array<Record<string, unknown>> = [];
+  const classes: LegendClass[] = [];
+  fields.forEach((field, index) => {
+    if (!observed.has(field)) return;
+    const rgb = palette[index % palette.length]!;
+    const label = aliases[field] ?? field;
+    infos.push({ value: field, label, description: "", symbol: polygonSymbol(rgb) });
+    classes.push({ label, color: rgb, value: field });
+  });
+
+  return {
+    renderer: {
+      type: "uniqueValue",
+      valueExpression: expression,
+      valueExpressionTitle: "Predominant Variable",
+      legendOptions: { title: "Predominant Variable" },
+      defaultLabel: "No data / Other",
+      defaultSymbol: defaultSymbol(),
+      uniqueValueInfos: infos,
+    },
+    legend: {
+      method: "Predominant Variable",
+      scheme,
+      title: "Predominant Variable",
+      fields: fields.map((name) => ({ id: name, name, label: aliases[name] ?? name })),
+      colors: Object.fromEntries(classes.map((c) => [c.value ?? c.label, c.color])),
+      classes,
+    },
+  };
+}
+
+export { BIVARIATE_SCHEMES, minMax };
