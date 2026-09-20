@@ -53,10 +53,11 @@ const INCIDENT_KPI_CARDS: Array<{
 ];
 
 /**
- * KPI cards above the map — fixed Incident set, centered over the map.
+ * KPI cards above the map — fixed Incident set, independent of the analytics
+ * window indicator group (Demography, Socio-Economic, etc.).
  */
 export function MapKpiBar() {
-  const kpis = useAppStore((s) => s.kpis);
+  const kpis = useAppStore((s) => s.mapIncidentKpis);
   const loading = useAppStore((s) => s.analyticsLoading);
 
   const cards = useMemo(() => {
