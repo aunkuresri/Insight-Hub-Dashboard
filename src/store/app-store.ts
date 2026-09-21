@@ -1,6 +1,5 @@
 import { create } from "zustand";
-import { getAppConfig } from "@/config/app-config";
-import { INDICATOR_GROUPS, allIndicatorFields, kpiFieldsForGroup, labelForField } from "@/config/indicators";
+import { kpiFieldsForGroup, labelForField } from "@/config/indicators";
 import {
   ADMIN_LEVELS,
   type AdminLevelId,
@@ -8,7 +7,6 @@ import {
   type LocationFilters,
   emptyFilters,
 } from "@/config/layers";
-import type { ColorSchemeId } from "@/config/symbology-schemes";
 import { getMapController } from "@/lib/gis/map-controller";
 import { resolveField, resolveFieldName, type FieldInfo } from "@/lib/gis/fields";
 import { whereForLevel } from "@/lib/gis/where";
@@ -17,9 +15,15 @@ import {
   buildChartRenderer,
   type AppliedLegend,
 } from "@/lib/symbology/renderers";
-import type { SelectionInfo } from "@/lib/gis/selection-info";
 
 type Toast = { kind: "info" | "success" | "danger"; message: string } | null;
+
+export type SelectionAncestor = { label: string; value: string };
+export type SelectionInfo = {
+  unitLabel: string;
+  areaName: string;
+  ancestors: SelectionAncestor[];
+};
 
 type AppliedState = {
   boundary: AppliedLegend | null;
@@ -38,7 +42,7 @@ type AppState = {
   applied: AppliedState;
   symLayerGroup: LayerGroupId;
   symFieldsByGroup: SymFieldsByGroup;
-  symScheme: ColorSchemeId;
+  symScheme: string;
   symSizeField: string;
   symApplying: boolean;
   selectionName: string | null;
@@ -55,7 +59,7 @@ type AppState = {
   refreshAnalytics: () => Promise<void>;
   setSymLayerGroup: (group: LayerGroupId) => void;
   toggleSymField: (id: string) => void;
-  setSymScheme: (scheme: ColorSchemeId) => void;
+  setSymScheme: (scheme: string) => void;
   setSymSizeField: (id: string) => void;
   applySymbology: () => Promise<void>;
   resetSymbology: (group?: LayerGroupId) => void;
@@ -84,7 +88,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   applied: { boundary: null, chart: null },
   symLayerGroup: "boundary",
   symFieldsByGroup: emptySymFields(),
-  symScheme: "blues",
+  symScheme: "Auto",
   symSizeField: "",
   symApplying: false,
   selectionName: null,
@@ -190,7 +194,8 @@ export const useAppStore = create<AppState>((set, get) => ({
       kpis.push({ id: "features", label: "Features", value: count });
 
       const fields = kpiFieldsForGroup("Incident").slice(0, 4);
-      for (const fieldId of fields) {
+      for (const field of fields) {
+        const fieldId = field.id;
         const resolved = resolveField(schema, fieldId);
         if (!resolved) continue;
         try {
@@ -209,11 +214,15 @@ export const useAppStore = create<AppState>((set, get) => ({
           const total = Number(stats?.[0]?.total ?? stats?.[0]?.TOTAL ?? null);
           kpis.push({
             id: fieldId,
-            label: labelForField(fieldId),
+            label: field.label || labelForField(fieldId),
             value: Number.isFinite(total) ? total : null,
           });
         } catch {
-          kpis.push({ id: fieldId, label: labelForField(fieldId), value: null });
+          kpis.push({
+            id: fieldId,
+            label: field.label || labelForField(fieldId),
+            value: null,
+          });
         }
       }
       set({ analyticsKpis: kpis, analyticsBusy: false });
