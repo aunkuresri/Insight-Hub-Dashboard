@@ -62,7 +62,8 @@ type AppState = {
   currentAdminLevel: AdminLevelId | null;
   leftOpen: boolean;
   rightOpen: boolean;
-  locationFilters: LocationFilters;
+  filters: LocationFilters;
+  filterOptions: Record<AdminLevelId, string[]>;
   toast: Toast;
   applied: AppliedState;
   symLayerGroup: LayerGroupId;
@@ -85,10 +86,9 @@ type AppState = {
   setScale: (level: AdminLevelId | null, scale: number) => void;
   setLeftOpen: (open: boolean) => void;
   setRightOpen: (open: boolean) => void;
-  setLocationFilter: (level: AdminLevelId, value: string | null) => void;
-  clearLocationFilters: () => Promise<void>;
-  applyLocationFilters: () => Promise<void>;
-  loadNameOptions: (level: AdminLevelId) => Promise<string[]>;
+  setFilter: (level: AdminLevelId, value: string | null) => Promise<void>;
+  clearFilters: () => Promise<void>;
+  loadFilterOptions: () => Promise<void>;
   refreshAnalytics: () => Promise<void>;
   setAnalyticsGroup: (group: string) => void;
   setAnalyticsMetric: (id: string) => void;
@@ -115,7 +115,8 @@ export const useAppStore = create<AppState>((set, get) => ({
   currentAdminLevel: null,
   leftOpen: true,
   rightOpen: true,
-  locationFilters: emptyFilters(),
+  filters: emptyFilters(),
+  filterOptions: { division: [], district: [], upazila: [], union: [] },
   toast: null,
   applied: { boundary: null, chart: null },
   symLayerGroup: "boundary",
@@ -136,61 +137,78 @@ export const useAppStore = create<AppState>((set, get) => ({
 
   currentLevel: () => get().currentAdminLevel ?? ADMIN_LEVELS[0]?.id ?? "division",
 
-  setMapReady: (ready, title) => set({ mapReady: ready, mapTitle: title ?? get().mapTitle, mapError: ready ? null : get().mapError }),
+  setMapReady: (ready, title) =>
+    set({ mapReady: ready, mapTitle: title ?? get().mapTitle, mapError: ready ? null : get().mapError }),
   setMapError: (message) => set({ mapError: message }),
   setScale: (level, scale) => set({ currentAdminLevel: level, mapScale: scale }),
   setLeftOpen: (open) => set({ leftOpen: open }),
   setRightOpen: (open) => set({ rightOpen: open }),
 
-  setLocationFilter: (level, value) => {
-    set({ locationFilters: { ...get().locationFilters, [level]: value } });
-  },
-
-  applyLocationFilters: async () => {
+  setFilter: async (level, value) => {
+    const next = { ...get().filters, [level]: value };
+    // Clear children when parent changes
+    const order: AdminLevelId[] = ["division", "district", "upazila", "union"];
+    const idx = order.indexOf(level);
+    for (let i = idx + 1; i < order.length; i++) next[order[i]] = null;
+    set({ filters: next });
     const map = getMapController();
-    const filters = get().locationFilters;
-    if (map) await map.applyFilters(filters);
+    if (map) await map.applyFilters(next);
+    void get().loadFilterOptions();
     void get().refreshAnalytics();
   },
 
-  clearLocationFilters: async () => {
+  clearFilters: async () => {
     const filters = emptyFilters();
-    set({ locationFilters: filters });
+    set({ filters });
     const map = getMapController();
     if (map) {
       await map.applyFilters(filters);
       await map.resetExtent();
     }
+    void get().loadFilterOptions();
     void get().refreshAnalytics();
   },
 
-  loadNameOptions: async (levelId) => {
+  loadFilterOptions: async () => {
     const map = getMapController();
-    if (!map) return [];
-    const level = getAdminLevel(levelId);
-    const layer = map.findLayer(level.layerTitles.boundary);
-    if (!layer) return [];
-    const nameField = resolveFieldName(map.schemaOf(layer), level.nameField) ?? level.nameField;
-    const filters = get().locationFilters;
-    let where = "1=1";
-    if (level.parentId) {
-      const parent = getAdminLevel(level.parentId);
-      const parentVal = filters[level.parentId];
-      if (parentVal) {
-        const pField = resolveFieldName(map.schemaOf(layer), parent.nameField) ?? parent.nameField;
-        where = `UPPER(${pField}) = UPPER('${parentVal.replace(/'/g, "''")}')`;
+    if (!map) return;
+    const filters = get().filters;
+    const options: Record<AdminLevelId, string[]> = {
+      division: [],
+      district: [],
+      upazila: [],
+      union: [],
+    };
+    for (const level of ADMIN_LEVELS) {
+      const layer = map.findLayer(level.layerTitles.boundary);
+      if (!layer) continue;
+      const nameField = resolveFieldName(map.schemaOf(layer), level.nameField) ?? level.nameField;
+      let where = "1=1";
+      if (level.parentId) {
+        const parent = getAdminLevel(level.parentId);
+        const parentVal = filters[level.parentId];
+        if (parentVal) {
+          const pField = resolveFieldName(map.schemaOf(layer), parent.nameField) ?? parent.nameField;
+          where = `UPPER(${pField}) = UPPER('${parentVal.replace(/'/g, "''")}')`;
+        } else {
+          options[level.id] = [];
+          continue;
+        }
+      }
+      try {
+        const features = await map.queryAttributes(layer, {
+          outFields: [nameField],
+          returnGeometry: false,
+          where,
+        });
+        options[level.id] = uniqueSorted(
+          features.map((f) => (f.attributes?.[nameField] != null ? String(f.attributes[nameField]) : null)),
+        );
+      } catch {
+        options[level.id] = [];
       }
     }
-    try {
-      const features = await map.queryAttributes(layer, {
-        outFields: [nameField],
-        returnGeometry: false,
-        where,
-      });
-      return uniqueSorted(features.map((f) => (f.attributes?.[nameField] != null ? String(f.attributes[nameField]) : null)));
-    } catch {
-      return [];
-    }
+    set({ filterOptions: options });
   },
 
   setAnalyticsGroup: (group) => {
@@ -219,7 +237,7 @@ export const useAppStore = create<AppState>((set, get) => ({
       const state = get();
       const schema = map.schemaOf(layer);
       const where = "1=1";
-      const geometry = state.selectionGeometry ?? map.currentExtent?.() ?? null;
+      const geometry = state.selectionGeometry ?? map.currentExtent() ?? null;
       const kpis: KpiValue[] = [];
       const count = await map.queryCount(layer, where, geometry);
       kpis.push({ id: "features", label: "Features", value: count });
