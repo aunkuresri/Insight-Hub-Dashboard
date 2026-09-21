@@ -82,56 +82,110 @@ function CompositionPieCard({
   );
 }
 
+function CompareBarCard({
+  def,
+  bars,
+}: {
+  def: CompositionChartDef;
+  bars: Array<{ id: string; label: string; value: number }>;
+}) {
+  const data = bars.filter((b) => b.value > 0);
+  return (
+    <article className="chart-card">
+      <header>
+        <h3>{def.title}</h3>
+        {def.description ? <p>{def.description}</p> : null}
+      </header>
+      {data.length ? (
+        <div className="chart-body">
+          <ResponsiveContainer width="100%" height={160}>
+            <BarChart data={data} layout="vertical" margin={{ left: 8, right: 12 }}>
+              <XAxis type="number" hide />
+              <YAxis type="category" dataKey="label" width={88} tick={{ fill: "var(--color-muted)", fontSize: 11 }} />
+              <Tooltip
+                formatter={(value) => formatNumber(Number(value))}
+                contentStyle={tooltipStyle}
+                itemStyle={{ color: "var(--color-fg)" }}
+              />
+              <Bar dataKey="value" fill="var(--color-accent)" radius={[0, 4, 4, 0]} />
+            </BarChart>
+          </ResponsiveContainer>
+        </div>
+      ) : (
+        <p className="empty-note">No numeric values for this comparison.</p>
+      )}
+    </article>
+  );
+}
+
 export function AnalyticsCharts() {
   const composition = useAppStore((s) => s.composition);
   const kpis = useAppStore((s) => s.kpis);
   const ranking = useAppStore((s) => s.ranking);
   const group = useAppStore((s) => s.analyticsGroup);
-  const chartDefs = compositionChartsForGroup(group);
 
-  const safeComposition = composition ?? [];
-  const safeKpis = kpis ?? [];
-  const safeRanking = ranking ?? [];
+  const chartDefs = compositionChartsForGroup(group);
+  const pieDefs = chartDefs.filter((d) => d.type !== "compare");
+  const compareDefs = chartDefs.filter((d) => d.type === "compare");
+
+  const barData = (ranking ?? []).slice(0, 8).map((row) => ({
+    name: row.name.length > 12 ? `${row.name.slice(0, 12)}…` : row.name,
+    full: row.name,
+    value: row.value,
+  }));
+
+  const slicesFor = (def: CompositionChartDef) =>
+    (def.fieldIds ?? []).map((id) => ({
+      id,
+      label: labelForField(id),
+      value: valueFor(composition, kpis, id),
+    }));
 
   return (
-    <div className="analytics-charts">
-      {chartDefs.map((def) => {
-        const slices = (def.fields ?? []).map((id) => ({
-          id,
-          label: labelForField(id),
-          value: valueFor(safeComposition, safeKpis, id),
-        }));
-        return <CompositionPieCard key={def.id ?? def.title} def={def} slices={slices} />;
-      })}
-      {!chartDefs.length ? (
-        <article className="chart-card">
-          <header>
-            <h3>{group} composition</h3>
-          </header>
-          <p className="empty-note">No composition charts defined for this group.</p>
-        </article>
-      ) : null}
-      {safeRanking.length > 0 ? (
-        <article className="chart-card">
-          <header>
-            <h3>Top areas</h3>
-          </header>
-          <div className="chart-body">
-            <ResponsiveContainer width="100%" height={180}>
-              <BarChart data={safeRanking.slice(0, 8)} layout="vertical" margin={{ left: 8, right: 12 }}>
-                <XAxis type="number" hide />
-                <YAxis type="category" dataKey="name" width={90} tick={{ fontSize: 11 }} />
-                <Bar dataKey="value" fill="var(--chart-1)" radius={[0, 4, 4, 0]} />
-                <Tooltip
-                  formatter={(value) => formatNumber(Number(value))}
-                  contentStyle={tooltipStyle}
-                  itemStyle={{ color: "var(--color-fg)" }}
-                />
-              </BarChart>
-            </ResponsiveContainer>
-          </div>
-        </article>
-      ) : null}
+    <div className="chart-grid">
+      {(pieDefs.length > 0 || !chartDefs.length) && (
+        <div className="chart-row chart-row-pies">
+          {pieDefs.map((def) => (
+            <CompositionPieCard key={def.id} def={def} slices={slicesFor(def)} />
+          ))}
+          {!chartDefs.length ? (
+            <article className="chart-card">
+              <header>
+                <h3>{group} composition</h3>
+                <p>No charts configured for this group</p>
+              </header>
+            </article>
+          ) : null}
+        </div>
+      )}
+
+      <div className="chart-row chart-row-bars">
+        {compareDefs.map((def) => (
+          <CompareBarCard key={def.id} def={def} bars={slicesFor(def)} />
+        ))}
+        {barData.length > 0 ? (
+          <article className="chart-card">
+            <header>
+              <h3>Top areas</h3>
+            </header>
+            <div className="chart-body">
+              <ResponsiveContainer width="100%" height={180}>
+                <BarChart data={barData} layout="vertical" margin={{ left: 8, right: 12 }}>
+                  <XAxis type="number" hide />
+                  <YAxis type="category" dataKey="name" width={90} tick={{ fontSize: 11 }} />
+                  <Bar dataKey="value" fill="var(--chart-1)" radius={[0, 4, 4, 0]} />
+                  <Tooltip
+                    formatter={(value) => formatNumber(Number(value))}
+                    labelFormatter={(_, payload) => payload?.[0]?.payload?.full ?? ""}
+                    contentStyle={tooltipStyle}
+                    itemStyle={{ color: "var(--color-fg)" }}
+                  />
+                </BarChart>
+              </ResponsiveContainer>
+            </div>
+          </article>
+        ) : null}
+      </div>
     </div>
   );
 }
