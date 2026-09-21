@@ -2,51 +2,25 @@ import { useMemo } from "react";
 import { formatNumber } from "@/lib/utils";
 import { useAppStore } from "@/store/app-store";
 
-/**
- * Fixed Incident cards (excludes Total Incidents).
- * Icon names must exist in @esri/calcite-ui-icons (kebab-case).
- * tone drives a very light professional accent (ArcGIS Dashboard style).
- */
-const INCIDENT_KPI_CARDS: Array<{
-  id: string;
-  label: string;
-  icon: string;
-  insight: string;
-  /** Visual tone for icon + subtle card accent */
-  tone: "red" | "green" | "blue" | "yellow";
-}> = [
+const INCIDENT_KPI_CARDS = [
   {
-    id: "Crime",
-    label: "Crime",
+    id: "Total_Incidents",
+    label: "Total Incidents",
     icon: "exclamation-mark-triangle",
-    insight: "Reported criminal incidents",
+    insight: "All recorded incidents",
     tone: "red",
   },
   {
-    id: "Judgmental",
-    label: "Judgmental",
-    icon: "hammer",
-    insight: "Administrative or judicial actions",
-    tone: "green",
+    id: "Killed",
+    label: "Killed",
+    icon: "user-minus",
+    insight: "Fatalities",
+    tone: "rose",
   },
   {
-    id: "Resilience",
-    label: "Resilience",
-    icon: "check-shield",
-    insight: "Community response measures",
-    tone: "blue",
-  },
-  {
-    id: "Total_Death",
-    label: "Death",
-    icon: "exclamation-mark-circle",
-    insight: "Reported fatalities",
-    tone: "red",
-  },
-  {
-    id: "Total_Injured",
+    id: "Injured",
     label: "Injured",
-    icon: "medical",
+    icon: "user-plus",
     insight: "Persons with non-fatal harm",
     tone: "yellow",
   },
@@ -62,7 +36,7 @@ export function MapKpiBar() {
 
   const cards = useMemo(() => {
     return INCIDENT_KPI_CARDS.map((meta) => {
-      const match = kpis.find(
+      const match = (kpis ?? []).find(
         (k) => k.id === meta.id || k.id.toLowerCase() === meta.id.toLowerCase(),
       );
       return {
