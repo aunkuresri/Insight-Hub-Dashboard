@@ -37,6 +37,7 @@
   padding: 8px 10px;
   background: #eef1f4;
   border-bottom: 1px solid rgb(0 0 0 / 0.1);
+  box-shadow: inset 0 1px 0 rgb(255 255 255 / 0.6);
   z-index: 5;
 }
 
@@ -50,7 +51,7 @@
   box-sizing: border-box;
 }
 
-/* Base card — soft shade + left accent (ArcGIS indicator style) */
+/* Base card — soft shade + left accent + elevation */
 .map-kpi-card {
   min-width: 0;
   max-width: none;
@@ -61,7 +62,16 @@
   border: 1px solid rgb(0 0 0 / 0.08);
   border-left: 3px solid #0079c1;
   border-radius: 4px;
-  box-shadow: 0 1px 2px rgb(0 0 0 / 0.04);
+  box-shadow:
+    0 1px 2px rgb(0 0 0 / 0.06),
+    0 2px 8px rgb(0 0 0 / 0.06);
+  transition: box-shadow 0.15s ease;
+}
+
+.map-kpi-card:hover {
+  box-shadow:
+    0 2px 4px rgb(0 0 0 / 0.08),
+    0 4px 12px rgb(0 0 0 / 0.08);
 }
 
 .map-kpi-card-head {
