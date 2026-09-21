@@ -2,25 +2,51 @@ import { useMemo } from "react";
 import { formatNumber } from "@/lib/utils";
 import { useAppStore } from "@/store/app-store";
 
-const INCIDENT_KPI_CARDS = [
+/**
+ * Fixed Incident cards (excludes Total Incidents).
+ * Icon names must exist in @esri/calcite-ui-icons (kebab-case).
+ * tone drives a very light professional accent (ArcGIS Dashboard style).
+ */
+const INCIDENT_KPI_CARDS: Array<{
+  id: string;
+  label: string;
+  icon: string;
+  insight: string;
+  /** Visual tone for icon + subtle card accent */
+  tone: "red" | "green" | "blue" | "yellow";
+}> = [
   {
-    id: "Total_Incidents",
-    label: "Total Incidents",
+    id: "Crime",
+    label: "Crime",
     icon: "exclamation-mark-triangle",
-    insight: "All recorded incidents",
+    insight: "Reported criminal incidents",
     tone: "red",
   },
   {
+    id: "Judgmental",
+    label: "Judgmental",
+    icon: "hammer",
+    insight: "Administrative or judicial actions",
+    tone: "green",
+  },
+  {
+    id: "Resilience",
+    label: "Resilience",
+    icon: "check-shield",
+    insight: "Community response measures",
+    tone: "blue",
+  },
+  {
     id: "Total_Death",
-    label: "Killed",
-    icon: "user-minus",
-    insight: "Fatalities",
-    tone: "rose",
+    label: "Death",
+    icon: "exclamation-mark-circle",
+    insight: "Reported fatalities",
+    tone: "red",
   },
   {
     id: "Total_Injured",
     label: "Injured",
-    icon: "user-plus",
+    icon: "medical",
     insight: "Persons with non-fatal harm",
     tone: "yellow",
   },
