@@ -36,7 +36,7 @@ export function MapKpiBar() {
 
   const cards = useMemo(() => {
     return INCIDENT_KPI_CARDS.map((meta) => {
-      const match = (kpis ?? []).find(
+      const match = kpis.find(
         (k) => k.id === meta.id || k.id.toLowerCase() === meta.id.toLowerCase(),
       );
       return {
