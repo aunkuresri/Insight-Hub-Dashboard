@@ -8,6 +8,7 @@
 import { getAppConfig } from "@/config/app-config";
 import {
   ADMIN_LEVELS,
+  type AdminLevel,
   type AdminLevelId,
   type LayerGroupId,
   type LocationFilters,
@@ -16,7 +17,6 @@ import {
 import { toFieldInfoFromEsri, type FieldInfo } from "@/lib/gis/fields";
 import { whereForLevel } from "@/lib/gis/where";
 import type { AppliedLegend, EsriRenderer } from "@/lib/symbology/renderers";
-import { chartLabelExpression } from "@/lib/symbology/arcade";
 
 type EsriModules = {
   esriConfig: { portalUrl: string; assetsPath: string; request: { timeout: number } };
@@ -60,8 +60,6 @@ export type EsriLayer = {
   outFields?: string[] | string;
   popupTemplate?: unknown;
   popupEnabled?: boolean;
-  labelingInfo?: unknown[] | null;
-  labelsVisible?: boolean;
   queryFeatures: (query: Record<string, unknown>) => Promise<{
     features: EsriFeature[];
     exceededTransferLimit?: boolean;
@@ -96,255 +94,327 @@ type EsriMapView = {
   ui: {
     add: (w: unknown, pos?: string) => void;
     remove: (w: unknown) => void;
+    empty: (pos?: string) => void;
+    components: string[];
+    padding: { left: number; right: number; top: number; bottom: number };
   };
   when: () => Promise<void>;
-  goTo: (target: unknown, opts?: unknown) => Promise<void>;
-  destroy: () => void;
-  on: (event: string, cb: (ev: unknown) => void) => { remove: () => void };
-  hitTest: (screenPoint: unknown, opts?: unknown) => Promise<{
-    results: Array<{ graphic?: EsriFeature & { layer?: EsriLayer }; mapPoint?: unknown }>;
-  }>;
-  toMap?: (screenPoint: { x: number; y: number }) => unknown;
-  viewpoint?: unknown;
-  extent?: unknown;
+  goTo: (target: unknown, opts?: unknown) => Promise<unknown>;
+  watch: (prop: string, cb: (v: unknown) => void) => { remove: () => void };
   whenLayerView: (layer: EsriLayer) => Promise<{ highlight: (id: unknown) => { remove: () => void } }>;
+  hitTest: (e: unknown) => Promise<{ results: Array<{ graphic?: EsriFeature; layer?: EsriLayer }> }>;
+  on: (event: string, cb: (e: unknown) => void) => { remove: () => void };
+  destroy: () => void;
+  viewpoint: { clone: () => unknown };
+  extent: unknown;
+  animation?: unknown;
 };
 
-type MapControllerEvents = {
-  onScale?: (level: AdminLevelId | null, scale: number) => void;
-  onReady?: (info?: { title: string; layers: Array<{ id: string; title: string }> }) => void;
-  onError?: (message: string) => void;
+export type MapEvents = {
+  onReady?: () => void;
+  onScale?: (level: AdminLevelId, scale: number) => void;
   onExtentSettled?: () => void;
+  onError?: (message: string) => void;
   onOpenLeftPanel?: () => void;
   onOpenRightPanel?: () => void;
-  onSelection?: (payload: {
-    layerId: string;
-    layerTitle: string;
-    attributes: Record<string, unknown>;
-  } | null) => void;
 };
 
 function isChartLayer(layer: EsriLayer): boolean {
-  const t = `${layer.title} ${layer.id}`.toLowerCase();
-  return t.includes("chart") || t.includes("pie");
+  return /chart/i.test(layer.title || "");
 }
 
-let singleton: MapController | null = null;
+async function loadEsri(): Promise<EsriModules> {
+  const [
+    configMod,
+    webmapMod,
+    viewMod,
+    zoomMod,
+    homeMod,
+    expandMod,
+    legendMod,
+    basemapGalleryMod,
+    scaleMod,
+    popupTemplateMod,
+    jsonMod,
+  ] = await Promise.all([
+    import("@arcgis/core/config.js"),
+    import("@arcgis/core/WebMap.js"),
+    import("@arcgis/core/views/MapView.js"),
+    import("@arcgis/core/widgets/Zoom.js"),
+    import("@arcgis/core/widgets/Home.js"),
+    import("@arcgis/core/widgets/Expand.js"),
+    import("@arcgis/core/widgets/Legend.js"),
+    import("@arcgis/core/widgets/BasemapGallery.js"),
+    import("@arcgis/core/widgets/ScaleBar.js"),
+    import("@arcgis/core/PopupTemplate.js"),
+    import("@arcgis/core/renderers/support/jsonUtils.js"),
+  ]);
+  return {
+    esriConfig: configMod.default as EsriModules["esriConfig"],
+    WebMap: webmapMod.default as unknown as EsriModules["WebMap"],
+    MapView: viewMod.default as unknown as EsriModules["MapView"],
+    Zoom: zoomMod.default as unknown as EsriModules["Zoom"],
+    Home: homeMod.default as unknown as EsriModules["Home"],
+    Expand: expandMod.default as unknown as EsriModules["Expand"],
+    Legend: legendMod.default as unknown as EsriModules["Legend"],
+    BasemapGallery: basemapGalleryMod.default as unknown as EsriModules["BasemapGallery"],
+    ScaleBar: scaleMod.default as unknown as EsriModules["ScaleBar"],
+    PopupTemplate: popupTemplateMod.default as unknown as EsriModules["PopupTemplate"],
+    jsonUtils: jsonMod as EsriModules["jsonUtils"],
+  };
+}
 
 export class MapController {
+  view: EsriMapView | null = null;
+  webmap: EsriWebMap | null = null;
+  legendHost: HTMLDivElement | null = null;
+  private esriLegendHost: HTMLElement | null = null;
+  private esriLegend: {
+    destroy: () => void;
+    layerInfos?: Array<{ layer: unknown }>;
+  } | null = null;
+  private legendExpand: { content: unknown; destroy: () => void } | null = null;
   private modules: EsriModules | null = null;
-  private map: EsriWebMap | null = null;
-  private view: EsriMapView | null = null;
-  private widgets: Array<{ destroy: () => void }> = [];
   private originalRenderers = new Map<string, unknown>();
   private originalPopupTemplates = new Map<string, unknown>();
   private initialViewpoint: unknown = null;
-  private events: MapControllerEvents = {};
-  private scaleHandle: { remove: () => void } | null = null;
-  private clickHandle: { remove: () => void } | null = null;
+  private handles: Array<{ remove: () => void }> = [];
   private highlightHandle: { remove: () => void } | null = null;
-  private extentOverride: unknown | null = null;
-  legendHost: HTMLDivElement | null = null;
+  private widgets: Array<{ destroy: () => void }> = [];
+  private filterToggleBtn: HTMLButtonElement | null = null;
+  private symbologyToggleBtn: HTMLButtonElement | null = null;
   private onOpenLeft: (() => void) | null = null;
   private onOpenRight: (() => void) | null = null;
+  private extentOverride: unknown | null = null;
 
-  async init(container: HTMLDivElement, events: MapControllerEvents = {}): Promise<void> {
-    this.events = events;
-    this.onOpenLeft = events.onOpenLeftPanel ?? null;
-    this.onOpenRight = events.onOpenRightPanel ?? null;
+  async init(container: HTMLDivElement, events: MapEvents = {}): Promise<void> {
     const config = getAppConfig();
-    const [
-      esriConfig,
-      WebMap,
-      MapView,
-      Zoom,
-      Home,
-      Expand,
-      Legend,
-      BasemapGallery,
-      ScaleBar,
-      PopupTemplate,
-      jsonUtils,
-    ] = await Promise.all([
-      import("@arcgis/core/config").then((m) => m.default),
-      import("@arcgis/core/WebMap").then((m) => m.default),
-      import("@arcgis/core/views/MapView").then((m) => m.default),
-      import("@arcgis/core/widgets/Zoom").then((m) => m.default),
-      import("@arcgis/core/widgets/Home").then((m) => m.default),
-      import("@arcgis/core/widgets/Expand").then((m) => m.default),
-      import("@arcgis/core/widgets/Legend").then((m) => m.default),
-      import("@arcgis/core/widgets/BasemapGallery").then((m) => m.default),
-      import("@arcgis/core/widgets/ScaleBar").then((m) => m.default),
-      import("@arcgis/core/PopupTemplate").then((m) => m.default),
-      import("@arcgis/core/renderers/support/jsonUtils").then((m) => m),
-    ]);
+    const modules = await loadEsri();
+    this.modules = modules;
 
-    this.modules = {
-      esriConfig: esriConfig as EsriModules["esriConfig"],
-      WebMap: WebMap as EsriModules["WebMap"],
-      MapView: MapView as EsriModules["MapView"],
-      Zoom: Zoom as EsriModules["Zoom"],
-      Home: Home as EsriModules["Home"],
-      Expand: Expand as EsriModules["Expand"],
-      Legend: Legend as EsriModules["Legend"],
-      BasemapGallery: BasemapGallery as EsriModules["BasemapGallery"],
-      ScaleBar: ScaleBar as EsriModules["ScaleBar"],
-      PopupTemplate: PopupTemplate as EsriModules["PopupTemplate"],
-      jsonUtils: jsonUtils as EsriModules["jsonUtils"],
-    };
+    modules.esriConfig.portalUrl = config.portalUrl;
+    modules.esriConfig.assetsPath = `https://js.arcgis.com/${config.arcgisVersion}/@arcgis/core/assets`;
+    modules.esriConfig.request.timeout = 90_000;
 
-    esriConfig.portalUrl = config.portalUrl;
-    esriConfig.assetsPath = "https://js.arcgis.com/4.33/@arcgis/core/assets";
-    esriConfig.request.timeout = 120000;
+    if (config.oauthAppId && config.oauthAppId !== "YOUR_ENTERPRISE_APP_ID") {
+      const [IdentityManager, OAuthInfo] = await Promise.all([
+        import("@arcgis/core/identity/IdentityManager.js"),
+        import("@arcgis/core/identity/OAuthInfo.js"),
+      ]);
+      const info = new (OAuthInfo as unknown as { default: new (p: unknown) => unknown }).default({
+        appId: config.oauthAppId,
+        portalUrl: config.portalUrl,
+        popup: false,
+      });
+      (IdentityManager as { default: { registerOAuthInfos: (i: unknown[]) => void } }).default.registerOAuthInfos([
+        info,
+      ]);
+    }
 
-    const webmap = new WebMap({
-      portalItem: { id: config.webmapId },
+    const webmap = new modules.WebMap({
+      portalItem: { id: config.webmapId, portal: { url: config.portalUrl } },
     });
-    this.map = webmap as EsriWebMap;
 
-    const view = new MapView({
+    const view = new modules.MapView({
       container,
       map: webmap,
+      constraints: { snapToZoom: false },
+      ui: { components: ["attribution"] },
       popup: {
-        dockEnabled: true,
-        dockOptions: { position: "bottom-right", breakpoint: false },
+        autoOpenEnabled: true,
+        defaultPopupTemplateEnabled: true,
+        dockEnabled: false,
       },
-    }) as EsriMapView;
+    });
+
+    try {
+      if (view.popup) {
+        view.popup.autoOpenEnabled = true;
+        view.popup.dockEnabled = false;
+        view.popup.defaultPopupTemplateEnabled = true;
+      }
+    } catch {
+      /* popup chrome is optional */
+    }
+
+    this.webmap = webmap;
     this.view = view;
 
-    await view.when();
-    this.initialViewpoint = view.viewpoint;
+    try {
+      await view.when();
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "The web map failed to load.";
+      events.onError?.(message);
+      throw err;
+    }
 
-    const zoom = new Zoom({ view });
-    const home = new Home({ view });
-    const legend = new Legend({ view });
-    const basemapGallery = new BasemapGallery({ view });
-    const scaleBar = new ScaleBar({ view, unit: "metric" });
-    const legendExpand = new Expand({
+    this.initialViewpoint = view.viewpoint.clone();
+
+    const legendRoot = document.createElement("div");
+    legendRoot.className = "map-legend-root";
+
+    const customHost = document.createElement("div");
+    customHost.className = "custom-smart-legend";
+    this.legendHost = customHost;
+
+    const esriHost = document.createElement("div");
+    esriHost.className = "esri-smart-legend-host";
+    this.esriLegendHost = esriHost;
+
+    legendRoot.append(customHost, esriHost);
+
+    const esriLegend = new modules.Legend({
       view,
-      content: legend,
-      expandIcon: "legend",
-      group: "top-right",
+      container: esriHost,
+      hideLayersNotInCurrentView: true,
     });
-    const basemapExpand = new Expand({
+    this.esriLegend = esriLegend;
+
+    const zoom = new modules.Zoom({ view, layout: "horizontal" });
+    const home = new modules.Home({ view });
+
+    this.legendExpand = null;
+
+    const basemapGallery = new modules.BasemapGallery({ view });
+    const basemapExpand = new modules.Expand({
       view,
       content: basemapGallery,
       expandIcon: "basemap",
-      group: "top-right",
+      expandTooltip: "Basemap",
+      group: "top-left-tools",
+      mode: "floating",
     });
+    const scaleBar = new modules.ScaleBar({ view, unit: "metric", style: "ruler" });
 
-    view.ui.add(zoom, "top-left");
     view.ui.add(home, "top-left");
-    view.ui.add(legendExpand, "top-right");
-    view.ui.add(basemapExpand, "top-right");
-    view.ui.add(scaleBar, "bottom-left");
+    view.ui.add(basemapExpand, "top-left");
+    view.ui.add(zoom, "bottom-left");
+    view.ui.add(scaleBar, "bottom-right");
 
-    this.widgets = [zoom, home, legend, basemapGallery, scaleBar, legendExpand, basemapExpand].map(
-      (w) => w as { destroy: () => void },
-    );
+    this.onOpenLeft = events.onOpenLeftPanel ?? null;
+    this.onOpenRight = events.onOpenRightPanel ?? null;
+
+    this.filterToggleBtn = this.createPanelToggleButton({
+      title: "Smart Symbology",
+      icon: "classify-pixels",
+      onClick: () => this.onOpenLeft?.(),
+    });
+    this.symbologyToggleBtn = this.createPanelToggleButton({
+      title: "Legends",
+      icon: "legend",
+      onClick: () => this.onOpenRight?.(),
+    });
+    view.ui.add(this.filterToggleBtn, "top-left");
+    view.ui.add(this.symbologyToggleBtn, "top-right");
+    this.filterToggleBtn.style.display = "none";
+    this.symbologyToggleBtn.style.display = "none";
+
+    this.widgets.push(zoom, home, esriLegend, basemapGallery, basemapExpand, scaleBar);
 
     for (const layer of this.featureLayers()) {
-      if (!this.originalRenderers.has(layer.id)) {
-        this.originalRenderers.set(layer.id, layer.renderer ?? null);
-      }
-      if (!this.originalPopupTemplates.has(layer.id)) {
-        this.originalPopupTemplates.set(layer.id, layer.popupTemplate ?? null);
-      }
+      this.originalRenderers.set(layer.id, layer.renderer);
+      this.originalPopupTemplates.set(layer.id, layer.popupTemplate ?? null);
+
       if (isChartLayer(layer)) {
         layer.popupEnabled = false;
+        continue;
+      }
+
+      layer.popupEnabled = true;
+      if (!layer.outFields || (Array.isArray(layer.outFields) && layer.outFields.length === 0)) {
+        layer.outFields = ["*"];
       }
     }
 
-    const scaleWatcher = (view as { watch?: (prop: string, cb: (v: number) => void) => { remove: () => void } }).watch;
-    if (typeof scaleWatcher === "function") {
-      this.scaleHandle = scaleWatcher.call(view, "scale", (scale: number) => {
-        this.events.onScale?.(scaleToLevel(scale), scale);
-      });
-    } else {
-      this.scaleHandle = view.on("resize", () => {
-        this.events.onScale?.(scaleToLevel(view.scale), view.scale);
-      });
+    this.handles.push(
+      view.watch("scale", () => {
+        if (!this.view) return;
+        events.onScale?.(scaleToLevel(this.view.scale), this.view.scale);
+      }),
+    );
+
+    this.handles.push(
+      view.watch("stationary", (stationary) => {
+        if (!this.view || !stationary) return;
+        events.onScale?.(scaleToLevel(this.view.scale), this.view.scale);
+        events.onExtentSettled?.();
+      }),
+    );
+
+    events.onScale?.(scaleToLevel(view.scale), view.scale);
+    events.onReady?.();
+  }
+
+  private createPanelToggleButton(opts: {
+    title: string;
+    icon: string;
+    onClick: () => void;
+  }): HTMLButtonElement {
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.className = "esri-widget esri-widget--button map-panel-toggle-btn";
+    btn.title = opts.title;
+    btn.setAttribute("aria-label", opts.title);
+    btn.innerHTML = `<calcite-icon icon="${opts.icon}" scale="s"></calcite-icon>`;
+    btn.addEventListener("click", () => opts.onClick());
+    return btn;
+  }
+
+  syncLegendFilter(applied: { boundary: AppliedLegend | null; chart: AppliedLegend | null }): void {
+    if (!this.esriLegend) return;
+
+    const bothApplied = Boolean(applied.boundary && applied.chart);
+    if (bothApplied) {
+      this.esriLegend.layerInfos = [];
+      if (this.esriLegendHost) this.esriLegendHost.style.display = "none";
+      return;
     }
 
-    this.clickHandle = view.on("click", async (ev: unknown) => {
-      const e = ev as { x: number; y: number };
-      try {
-        const hit = await view.hitTest(e);
-        const graphic = (hit.results ?? []).find((r) => r.graphic?.layer)?.graphic;
-        if (graphic?.layer && graphic.attributes) {
-          this.events.onSelection?.({
-            layerId: graphic.layer.id,
-            layerTitle: graphic.layer.title,
-            attributes: graphic.attributes,
-          });
-        } else {
-          this.events.onSelection?.(null);
-        }
-      } catch {
-        this.events.onSelection?.(null);
-      }
+    const layers = this.featureLayers().filter((layer) => {
+      const isChart = isChartLayer(layer);
+      if (isChart && applied.chart) return false;
+      if (!isChart && applied.boundary) return false;
+      return true;
     });
 
-    const title = this.map.portalItem?.title ?? "Web Map";
-    const layers = this.featureLayers().map((l) => ({ id: l.id, title: l.title }));
-    this.events.onReady?.({ title, layers });
-    this.events.onScale?.(scaleToLevel(view.scale), view.scale);
-    this.events.onExtentSettled?.();
+    this.esriLegend.layerInfos = layers.map((layer) => ({ layer }));
+    if (this.esriLegendHost) {
+      this.esriLegendHost.style.display = layers.length ? "" : "none";
+    }
   }
 
   featureLayers(): EsriLayer[] {
-    if (!this.map) return [];
-    return this.map.allLayers.toArray().filter((l) => l.type === "feature") as EsriLayer[];
+    if (!this.webmap) return [];
+    return this.webmap.allLayers.toArray().filter((layer) => layer.type === "feature");
   }
 
-  layersFor(group: LayerGroupId, level: AdminLevelId | "all"): EsriLayer[] {
-    const all = this.featureLayers();
-    return all.filter((layer) => {
-      const chart = isChartLayer(layer);
-      if (group === "chart" && !chart) return false;
-      if (group === "boundary" && chart) return false;
-      if (level === "all") return true;
-      const t = `${layer.title} ${layer.id}`.toLowerCase();
-      return t.includes(level) || t.includes(level.replace(/_/g, " "));
-    });
+  findLayer(title: string): EsriLayer | null {
+    const wanted = title.trim().toLowerCase();
+    return this.featureLayers().find((layer) => (layer.title || "").trim().toLowerCase() === wanted) ?? null;
+  }
+
+  layersFor(group: LayerGroupId, levelId: AdminLevelId | "all"): EsriLayer[] {
+    const levels = levelId === "all" ? ADMIN_LEVELS : ADMIN_LEVELS.filter((l) => l.id === levelId);
+    const found: EsriLayer[] = [];
+    for (const level of levels) {
+      const layer = this.findLayer(level.layerTitles[group]);
+      if (layer) found.push(layer);
+    }
+    return found;
   }
 
   schemaOf(layer: EsriLayer): FieldInfo[] {
     return toFieldInfoFromEsri(layer.fields ?? []);
   }
 
-  async queryAttributes(
-    layer: EsriLayer,
-    opts: { outFields: string[]; returnGeometry?: boolean; where?: string },
-  ): Promise<EsriFeature[]> {
-    const result = await layer.queryFeatures({
-      where: opts.where ?? "1=1",
-      outFields: opts.outFields,
-      returnGeometry: opts.returnGeometry ?? false,
-      num: 2000,
-    });
-    return result.features;
-  }
-
-  findLayer(title: string): EsriLayer | null {
-    const t = title.toLowerCase();
-    return (
-      this.featureLayers().find(
-        (l) =>
-          l.title.toLowerCase() === t ||
-          l.id.toLowerCase() === t ||
-          l.title.toLowerCase().includes(t),
-      ) ?? null
-    );
-  }
-
   async applyFilters(filters: LocationFilters): Promise<void> {
     for (const level of ADMIN_LEVELS) {
       const where = whereForLevel(level, filters) || "1=1";
-      for (const group of ["boundary", "chart"] as const) {
+      const expression = where === "1=1" ? "1=1" : where;
+      for (const group of ["boundary", "chart"] as LayerGroupId[]) {
         const layer = this.findLayer(level.layerTitles[group]);
         if (!layer) continue;
-        layer.definitionExpression = where;
+        layer.definitionExpression = expression;
         try {
           (layer as { refresh?: () => void }).refresh?.();
         } catch {
@@ -353,6 +423,25 @@ export class MapController {
       }
     }
     await this.zoomToFilters(filters);
+  }
+
+  setExtentOverride(extent: unknown | null): void {
+    if (!extent) {
+      this.extentOverride = null;
+      return;
+    }
+    const ext = extent as { clone?: () => unknown };
+    this.extentOverride = typeof ext.clone === "function" ? ext.clone() : extent;
+  }
+
+  currentExtent(): unknown | null {
+    if (this.extentOverride) {
+      const ext = this.extentOverride as { clone?: () => unknown };
+      return typeof ext.clone === "function" ? ext.clone() : this.extentOverride;
+    }
+    if (!this.view?.extent) return null;
+    const ext = this.view.extent as { clone?: () => unknown };
+    return typeof ext.clone === "function" ? ext.clone() : this.view.extent;
   }
 
   async zoomToFilters(filters: LocationFilters): Promise<void> {
@@ -375,13 +464,15 @@ export class MapController {
     }
   }
 
-  setExtentOverride(extent: unknown | null): void {
-    if (!extent) {
-      this.extentOverride = null;
-      return;
-    }
-    const ext = extent as { clone?: () => unknown };
-    this.extentOverride = typeof ext.clone === "function" ? ext.clone() : extent;
+  async resetExtent(): Promise<void> {
+    if (!this.view || !this.initialViewpoint) return;
+    this.extentOverride = null;
+    await this.view.goTo(this.initialViewpoint, { duration: 700 });
+  }
+
+  async goToScale(scale: number): Promise<void> {
+    if (!this.view) return;
+    await this.view.goTo({ scale }, { duration: 500 });
   }
 
   async zoomToLevel(levelId: AdminLevelId): Promise<void> {
@@ -413,31 +504,33 @@ export class MapController {
     }
   }
 
-  async resetExtent(): Promise<void> {
-    if (!this.view || !this.initialViewpoint) return;
-    this.extentOverride = null;
-    await this.view.goTo(this.initialViewpoint, { duration: 700 });
-  }
-
-  currentExtent(): unknown | null {
-    if (this.extentOverride) {
-      const ext = this.extentOverride as { clone?: () => unknown };
-      return typeof ext.clone === "function" ? ext.clone() : this.extentOverride;
+  async queryAttributes(
+    layer: EsriLayer,
+    options: {
+      where?: string;
+      outFields?: string[];
+      orderByFields?: string[];
+      num?: number;
+      returnGeometry?: boolean;
+      returnDistinctValues?: boolean;
+      geometry?: unknown | null;
+    } = {},
+  ): Promise<EsriFeature[]> {
+    const where = options.where || layer.definitionExpression || "1=1";
+    const query: Record<string, unknown> = {
+      where,
+      outFields: options.outFields ?? ["*"],
+      returnGeometry: options.returnGeometry ?? false,
+      returnDistinctValues: options.returnDistinctValues ?? false,
+      orderByFields: options.orderByFields,
+      num: options.num ?? 2000,
+    };
+    if (options.geometry) {
+      query.geometry = options.geometry;
+      query.spatialRelationship = "intersects";
     }
-    if (!this.view?.extent) return null;
-    const ext = this.view.extent as { clone?: () => unknown };
-    return typeof ext.clone === "function" ? ext.clone() : this.view.extent;
-  }
-
-  async queryCount(layer: EsriLayer, where?: string, geometry?: unknown | null): Promise<number> {
-    try {
-      return await layer.queryFeatureCount({
-        where: where ?? "1=1",
-        geometry: geometry ?? undefined,
-      });
-    } catch {
-      return 0;
-    }
+    const result = await layer.queryFeatures(query);
+    return result.features;
   }
 
   async queryStats(
@@ -445,18 +538,35 @@ export class MapController {
     stats: Array<{ statisticType: string; onStatisticField: string; outStatisticFieldName: string }>,
     where?: string,
     geometry?: unknown | null,
-  ): Promise<Array<Record<string, unknown>>> {
-    try {
-      const result = await layer.queryFeatures({
-        where: where ?? "1=1",
-        geometry: geometry ?? undefined,
-        outStatistics: stats,
-        returnGeometry: false,
-      });
-      return result.features.map((f) => f.attributes);
-    } catch {
-      return [];
+  ): Promise<Record<string, number>> {
+    const query: Record<string, unknown> = {
+      where: where || layer.definitionExpression || "1=1",
+      outStatistics: stats,
+      returnGeometry: false,
+    };
+    if (geometry) {
+      query.geometry = geometry;
+      query.spatialRelationship = "intersects";
     }
+    const result = await layer.queryFeatures(query);
+    const row = result.features[0]?.attributes ?? {};
+    const out: Record<string, number> = {};
+    for (const [key, value] of Object.entries(row)) {
+      const n = Number(value);
+      out[key] = Number.isFinite(n) ? n : 0;
+    }
+    return out;
+  }
+
+  async queryCount(layer: EsriLayer, where?: string, geometry?: unknown | null): Promise<number> {
+    const query: Record<string, unknown> = {
+      where: where || layer.definitionExpression || "1=1",
+    };
+    if (geometry) {
+      query.geometry = geometry;
+      query.spatialRelationship = "intersects";
+    }
+    return layer.queryFeatureCount(query);
   }
 
   clearHighlight(): void {
@@ -468,29 +578,16 @@ export class MapController {
     this.highlightHandle = null;
   }
 
-  setPanelToggleVisibility(_opts: { left?: boolean; right?: boolean }): void {
-    /* Panel toggles optional in simplified controller */
+  setPanelToggleVisibility(opts: { left?: boolean; right?: boolean }): void {
+    if (this.filterToggleBtn && typeof opts.left === "boolean") {
+      this.filterToggleBtn.style.display = opts.left ? "flex" : "none";
+    }
+    if (this.symbologyToggleBtn && typeof opts.right === "boolean") {
+      this.symbologyToggleBtn.style.display = opts.right ? "flex" : "none";
+    }
   }
 
-  syncLegendFilter(_applied?: { boundary: AppliedLegend | null; chart: AppliedLegend | null }): void {
-    /* Custom legend sync optional */
-  }
-
-  async goHome(): Promise<void> {
-    if (!this.view || !this.initialViewpoint) return;
-    await this.view.goTo(this.initialViewpoint, { duration: 700 });
-  }
-
-  async goToScale(scale: number): Promise<void> {
-    if (!this.view) return;
-    await this.view.goTo({ scale }, { duration: 500 });
-  }
-
-  applyRenderer(
-    layer: EsriLayer,
-    rendererJson: EsriRenderer,
-    options?: { chartFields?: string[]; sizeField?: string | null },
-  ): void {
+  applyRenderer(layer: EsriLayer, rendererJson: EsriRenderer): void {
     if (!this.modules) return;
     if (!this.originalRenderers.has(layer.id)) {
       this.originalRenderers.set(layer.id, layer.renderer ?? null);
@@ -498,10 +595,8 @@ export class MapController {
     layer.renderer = this.modules.jsonUtils.fromJSON(rendererJson);
     if (isChartLayer(layer)) {
       layer.popupEnabled = false;
-      this.applyChartValueLabels(layer, options?.chartFields ?? [], options?.sizeField);
     } else {
       layer.popupEnabled = true;
-      this.clearLayerLabels(layer);
       if (!layer.outFields || (Array.isArray(layer.outFields) && layer.outFields.length === 0)) {
         layer.outFields = ["*"];
       }
@@ -509,53 +604,6 @@ export class MapController {
         layer.popupTemplate = this.originalPopupTemplates.get(layer.id) ?? null;
       }
     }
-  }
-
-  /** Value + predominant % text labels on pie chart symbols — e.g. "1,250 (42%)". */
-  private applyChartValueLabels(
-    layer: EsriLayer,
-    chartFields: string[],
-    sizeField?: string | null,
-  ): void {
-    const fields = chartFields.filter(Boolean);
-    if (!fields.length && !sizeField) {
-      this.clearLayerLabels(layer);
-      return;
-    }
-    const expression = chartLabelExpression(fields, sizeField);
-    const needed = [...fields];
-    if (sizeField) needed.push(sizeField);
-    if (!layer.outFields || layer.outFields === "*") {
-      layer.outFields = ["*", ...needed];
-    } else if (Array.isArray(layer.outFields)) {
-      const set = new Set(layer.outFields.map(String));
-      for (const f of needed) set.add(f);
-      layer.outFields = [...set];
-    }
-    layer.labelingInfo = [
-      {
-        labelExpressionInfo: { expression },
-        labelPlacement: "center-center",
-        deconflictionStrategy: "static",
-        symbol: {
-          type: "text",
-          color: [40, 40, 40, 255],
-          haloColor: [255, 255, 255, 230],
-          haloSize: 1.25,
-          font: {
-            family: "Avenir Next",
-            size: 9,
-            weight: "bold",
-          },
-        },
-      },
-    ];
-    layer.labelsVisible = true;
-  }
-
-  private clearLayerLabels(layer: EsriLayer): void {
-    layer.labelingInfo = [];
-    layer.labelsVisible = false;
   }
 
   resetRenderers(group?: LayerGroupId): void {
@@ -575,10 +623,8 @@ export class MapController {
       }
       if (isChartLayer(layer)) {
         layer.popupEnabled = false;
-        this.clearLayerLabels(layer);
       } else {
         layer.popupEnabled = true;
-        this.clearLayerLabels(layer);
       }
     }
   }
@@ -590,10 +636,14 @@ export class MapController {
 
   destroy(): void {
     this.clearHighlight();
-    this.scaleHandle?.remove();
-    this.clickHandle?.remove();
-    this.scaleHandle = null;
-    this.clickHandle = null;
+    for (const h of this.handles) {
+      try {
+        h.remove();
+      } catch {
+        /* ignore */
+      }
+    }
+    this.handles = [];
     for (const w of this.widgets) {
       try {
         w.destroy();
@@ -608,10 +658,12 @@ export class MapController {
       /* ignore */
     }
     this.view = null;
-    this.map = null;
+    this.webmap = null;
     this.modules = null;
   }
 }
+
+let singleton: MapController | null = null;
 
 export function getMapController(): MapController | null {
   return singleton;
@@ -619,7 +671,7 @@ export function getMapController(): MapController | null {
 
 export async function createMapController(
   container: HTMLDivElement,
-  events?: MapControllerEvents,
+  events: MapEvents = {},
 ): Promise<MapController> {
   if (singleton) {
     singleton.destroy();
