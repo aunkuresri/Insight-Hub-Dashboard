@@ -50,7 +50,7 @@
   box-sizing: border-box;
 }
 
-/* Base card — light tinted surfaces by tone (ArcGIS Dashboard style) */
+/* Base card — clean white, subtle border (ArcGIS indicator style) */
 .map-kpi-card {
   min-width: 0;
   max-width: none;
@@ -61,27 +61,6 @@
   border: 1px solid rgb(0 0 0 / 0.1);
   border-radius: 4px;
   box-shadow: 0 1px 2px rgb(0 0 0 / 0.04);
-  border-left: 3px solid #0079c1;
-}
-
-.map-kpi-card--red {
-  background: linear-gradient(180deg, #fdf6f4 0%, #ffffff 72%);
-  border-left-color: #c7461a;
-}
-
-.map-kpi-card--green {
-  background: linear-gradient(180deg, #f3faf5 0%, #ffffff 72%);
-  border-left-color: #35ac46;
-}
-
-.map-kpi-card--blue {
-  background: linear-gradient(180deg, #f2f8fc 0%, #ffffff 72%);
-  border-left-color: #0079c1;
-}
-
-.map-kpi-card--yellow {
-  background: linear-gradient(180deg, #fef9ef 0%, #ffffff 72%);
-  border-left-color: #d19a00;
 }
 
 .map-kpi-card-head {
@@ -92,6 +71,7 @@
   min-width: 0;
 }
 
+/* Default icon (blue) — overridden by tone modifiers */
 .map-kpi-card-icon {
   display: inline-flex;
   align-items: center;
@@ -104,6 +84,7 @@
   flex-shrink: 0;
 }
 
+/* Very light professional tones — Esri / ArcGIS Dashboard palette */
 .map-kpi-card--red .map-kpi-card-icon {
   background: #fdf0ed;
   color: #c7461a;
@@ -269,6 +250,7 @@
   box-sizing: border-box;
 }
 
+/* Pie + legend: compact, no large empty gap */
 .analytics-modal-left .chart-body:not(.bar-body) {
   display: flex;
   flex-direction: row;
@@ -292,6 +274,7 @@
   width: auto;
 }
 
+/* Label + value stay adjacent (no stretched 1fr gap) */
 .analytics-modal-left .swatch-list li {
   display: grid;
   grid-template-columns: 10px auto auto;
