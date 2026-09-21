@@ -383,7 +383,7 @@ export function DataUpdateWindow() {
                       const on = fieldIds.includes(field.id);
                       return (
                         <li key={field.id} role="option" aria-selected={on}>
-                          <label className={`check-list-item${on ? " is-selected" : ""`}>
+                          <label className={`check-list-item${on ? " is-selected" : ""}`}>
                             <span className="check-list-box" aria-hidden="true">
                               <input
                                 type="checkbox"
