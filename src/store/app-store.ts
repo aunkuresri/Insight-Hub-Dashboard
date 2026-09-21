@@ -28,7 +28,8 @@ export type KpiValue = {
 };
 
 export type CompositionSlice = {
-  name: string;
+  id: string;
+  label: string;
   value: number;
   color?: string;
 };
@@ -67,6 +68,7 @@ type AppState = {
   toast: Toast;
   applied: AppliedState;
   symLayerGroup: LayerGroupId;
+  symBrowseGroup: string;
   symFieldsByGroup: SymFieldsByGroup;
   symScheme: string;
   symSizeField: string;
@@ -74,13 +76,15 @@ type AppState = {
   selectionName: string | null;
   selectionGeometry: unknown | null;
   selectionInfo: SelectionInfo | null;
-  analyticsBusy: boolean;
+  analyticsLoading: boolean;
   analyticsGroup: string;
   analyticsMetric: string;
-  analyticsKpis: KpiValue[];
-  rankingRows: RankingRow[];
+  kpis: KpiValue[];
+  mapIncidentKpis: KpiValue[];
+  ranking: RankingRow[];
   rankingColumns: string[];
   composition: CompositionSlice[];
+  featureCount: number;
   setMapReady: (ready: boolean, title?: string) => void;
   setMapError: (message: string | null) => void;
   setScale: (level: AdminLevelId | null, scale: number) => void;
@@ -92,8 +96,11 @@ type AppState = {
   refreshAnalytics: () => Promise<void>;
   setAnalyticsGroup: (group: string) => void;
   setAnalyticsMetric: (id: string) => void;
+  setRankingColumn: (index: number, fieldId: string) => void;
   setSymLayerGroup: (group: LayerGroupId) => void;
+  setSymBrowseGroup: (group: string) => void;
   toggleSymField: (id: string) => void;
+  removeSymField: (id: string) => void;
   setSymScheme: (scheme: string) => void;
   setSymSizeField: (id: string) => void;
   applySymbology: () => Promise<void>;
@@ -120,6 +127,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   toast: null,
   applied: { boundary: null, chart: null },
   symLayerGroup: "boundary",
+  symBrowseGroup: initialGroup,
   symFieldsByGroup: emptySymFields(),
   symScheme: "Auto",
   symSizeField: "",
@@ -127,13 +135,15 @@ export const useAppStore = create<AppState>((set, get) => ({
   selectionName: null,
   selectionGeometry: null,
   selectionInfo: null,
-  analyticsBusy: false,
+  analyticsLoading: false,
   analyticsGroup: initialGroup,
   analyticsMetric: initialColumns[0] ?? getAppConfig().defaultMetric,
-  analyticsKpis: [],
-  rankingRows: [],
+  kpis: [],
+  mapIncidentKpis: [],
+  ranking: [],
   rankingColumns: initialColumns,
   composition: [],
+  featureCount: 0,
 
   currentLevel: () => get().currentAdminLevel ?? ADMIN_LEVELS[0]?.id ?? "division",
 
@@ -146,7 +156,6 @@ export const useAppStore = create<AppState>((set, get) => ({
 
   setFilter: async (level, value) => {
     const next = { ...get().filters, [level]: value };
-    // Clear children when parent changes
     const order: AdminLevelId[] = ["division", "district", "upazila", "union"];
     const idx = order.indexOf(level);
     for (let i = idx + 1; i < order.length; i++) next[order[i]] = null;
@@ -215,23 +224,36 @@ export const useAppStore = create<AppState>((set, get) => ({
     const cols = kpiFieldsForGroup(group).map((f) => f.id);
     set({
       analyticsGroup: group,
-      rankingColumns: cols,
+      rankingColumns: cols.slice(0, 3),
       analyticsMetric: cols[0] ?? get().analyticsMetric,
     });
     void get().refreshAnalytics();
   },
   setAnalyticsMetric: (id) => set({ analyticsMetric: id }),
+  setRankingColumn: (index, fieldId) => {
+    const cols = [...get().rankingColumns];
+    cols[index] = fieldId;
+    set({ rankingColumns: cols });
+    void get().refreshAnalytics();
+  },
 
   refreshAnalytics: async () => {
     const map = getMapController();
     if (!map) return;
-    set({ analyticsBusy: true });
+    set({ analyticsLoading: true });
     try {
       const levelId = get().currentLevel();
       const level = getAdminLevel(levelId);
       const layer = map.findLayer(level.layerTitles.boundary);
       if (!layer) {
-        set({ analyticsBusy: false, analyticsKpis: [], rankingRows: [], composition: [] });
+        set({
+          analyticsLoading: false,
+          kpis: [],
+          mapIncidentKpis: [],
+          ranking: [],
+          composition: [],
+          featureCount: 0,
+        });
         return;
       }
       const state = get();
@@ -240,11 +262,13 @@ export const useAppStore = create<AppState>((set, get) => ({
       const geometry = state.selectionGeometry ?? map.currentExtent() ?? null;
       const kpis: KpiValue[] = [];
       const count = await map.queryCount(layer, where, geometry);
-      kpis.push({ id: "features", label: "Features", value: count });
 
-      for (const field of kpiFieldsForGroup(state.analyticsGroup).slice(0, 4)) {
+      for (const field of kpiFieldsForGroup(state.analyticsGroup).slice(0, 6)) {
         const resolved = resolveField(schema, field.id);
-        if (!resolved) continue;
+        if (!resolved) {
+          kpis.push({ id: field.id, label: field.label || labelForField(field.id), value: null });
+          continue;
+        }
         try {
           const stats = await map.queryStats(
             layer,
@@ -263,18 +287,104 @@ export const useAppStore = create<AppState>((set, get) => ({
         }
       }
 
-      set({ analyticsKpis: kpis, analyticsBusy: false });
+      // Map KPI bar always uses Incident group
+      const mapIncidentKpis: KpiValue[] = [];
+      for (const field of kpiFieldsForGroup("Incident").slice(0, 6)) {
+        const resolved = resolveField(schema, field.id);
+        if (!resolved) {
+          mapIncidentKpis.push({ id: field.id, label: field.label || labelForField(field.id), value: null });
+          continue;
+        }
+        try {
+          const stats = await map.queryStats(
+            layer,
+            [{ statisticType: "sum", onStatisticField: resolved.name, outStatisticFieldName: "total" }],
+            where,
+            geometry,
+          );
+          const total = Number(stats?.[0]?.total ?? stats?.[0]?.TOTAL ?? null);
+          mapIncidentKpis.push({
+            id: field.id,
+            label: field.label || labelForField(field.id),
+            value: Number.isFinite(total) ? total : null,
+          });
+        } catch {
+          mapIncidentKpis.push({ id: field.id, label: field.label || labelForField(field.id), value: null });
+        }
+      }
+
+      // Ranking rows (simple attribute query)
+      const ranking: RankingRow[] = [];
+      const nameField = resolveFieldName(schema, level.nameField) ?? level.nameField;
+      const rankFields = state.rankingColumns
+        .map((id) => {
+          const info = resolveField(schema, id);
+          return info ? { id, name: info.name } : null;
+        })
+        .filter(Boolean) as Array<{ id: string; name: string }>;
+      if (rankFields.length) {
+        try {
+          const outFields = [nameField, ...rankFields.map((f) => f.name)];
+          const features = await map.queryAttributes(layer, {
+            outFields,
+            returnGeometry: false,
+            where,
+          });
+          const primary = rankFields[0]!.name;
+          const rows: RankingRow[] = features
+            .map((f) => {
+              const name = f.attributes?.[nameField] != null ? String(f.attributes[nameField]) : "";
+              const columns: Record<string, number> = {};
+              for (const rf of rankFields) {
+                const v = Number(f.attributes?.[rf.name]);
+                columns[rf.id] = Number.isFinite(v) ? v : 0;
+              }
+              return { name, value: columns[rankFields[0]!.id] ?? 0, columns };
+            })
+            .filter((r) => r.name)
+            .sort((a, b) => b.value - a.value)
+            .slice(0, getAppConfig().rankingRows);
+          ranking.push(...rows);
+        } catch {
+          /* leave ranking empty */
+        }
+      }
+
+      // Composition slices from first composition chart fields
+      const composition: CompositionSlice[] = kpis
+        .filter((k) => k.value != null && (k.value as number) > 0)
+        .map((k) => ({ id: k.id, label: k.label, value: k.value as number }));
+
+      set({
+        kpis,
+        mapIncidentKpis,
+        ranking,
+        composition,
+        featureCount: count,
+        analyticsLoading: false,
+      });
     } catch {
-      set({ analyticsBusy: false });
+      set({ analyticsLoading: false });
     }
   },
 
   setSymLayerGroup: (group) => set({ symLayerGroup: group }),
+  setSymBrowseGroup: (group) => set({ symBrowseGroup: group }),
   toggleSymField: (id) => {
     const group = get().symLayerGroup;
     const current = get().symFieldsByGroup[group] ?? [];
     const next = current.includes(id) ? current.filter((x) => x !== id) : [...current, id];
     set({ symFieldsByGroup: { ...get().symFieldsByGroup, [group]: next } });
+  },
+  removeSymField: (id) => {
+    const group = get().symLayerGroup;
+    const current = get().symFieldsByGroup[group] ?? [];
+    set({
+      symFieldsByGroup: {
+        ...get().symFieldsByGroup,
+        [group]: current.filter((x) => x !== id),
+      },
+    });
   },
   setSymScheme: (scheme) => set({ symScheme: scheme }),
   setSymSizeField: (id) => set({ symSizeField: id }),
