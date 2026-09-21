@@ -11,14 +11,14 @@ const INCIDENT_KPI_CARDS = [
     tone: "red",
   },
   {
-    id: "Killed",
+    id: "Total_Death",
     label: "Killed",
     icon: "user-minus",
     insight: "Fatalities",
     tone: "rose",
   },
   {
-    id: "Injured",
+    id: "Total_Injured",
     label: "Injured",
     icon: "user-plus",
     insight: "Persons with non-fatal harm",
@@ -35,8 +35,9 @@ export function MapKpiBar() {
   const loading = useAppStore((s) => s.analyticsLoading);
 
   const cards = useMemo(() => {
+    const list = kpis ?? [];
     return INCIDENT_KPI_CARDS.map((meta) => {
-      const match = kpis.find(
+      const match = list.find(
         (k) => k.id === meta.id || k.id.toLowerCase() === meta.id.toLowerCase(),
       );
       return {
