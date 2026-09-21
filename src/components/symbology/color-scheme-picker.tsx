@@ -4,6 +4,7 @@ import {
   CHOROPLETH_RAMPS,
   COLOR_SCHEMES,
   type ColorScheme,
+  type RGB,
   rgbCss,
 } from "@/config/symbology-schemes";
 
@@ -11,24 +12,35 @@ type Props = {
   value: string;
   onChange: (scheme: string) => void;
   mode?: "chart" | "boundary";
+  /** Selected field count — Boundary multi-field uses chart-style qualitative colors. */
+  fieldCount?: number;
 };
 
-function rampFor(scheme: ColorScheme, mode: "chart" | "boundary") {
-  if (mode === "chart") {
-    const palette = CHART_PALETTES[scheme] ?? CHART_PALETTES.Auto;
-    // Preview matches run behavior: span 1st … last across the scheme.
-    const n = Math.min(5, palette.length);
-    if (n <= 1) return palette.slice(0, 1);
-    if (n === 2) return [palette[0]!, palette[palette.length - 1]!];
-    const out = [];
-    for (let i = 0; i < n - 1; i += 1) out.push(palette[i]!);
-    out.push(palette[palette.length - 1]!);
-    return out;
-  }
-  return CHOROPLETH_RAMPS[scheme] ?? CHOROPLETH_RAMPS.Auto;
+/** Span 1st … last of a palette (same rule as chart / predominance apply). */
+function spanPalette(palette: RGB[], n: number): RGB[] {
+  const count = Math.min(Math.max(n, 1), 5);
+  if (!palette.length) return [];
+  if (count <= 1) return [palette[0]!];
+  if (count === 2) return [palette[0]!, palette[palette.length - 1]!];
+  const out: RGB[] = [];
+  for (let i = 0; i < count - 1; i += 1) out.push(palette[Math.min(i, palette.length - 2)]!);
+  out.push(palette[palette.length - 1]!);
+  return out;
 }
 
-function Ramp({ colors }: { colors: [number, number, number][] }) {
+function rampFor(scheme: ColorScheme, mode: "chart" | "boundary", fieldCount: number): RGB[] {
+  if (mode === "chart") {
+    return spanPalette(CHART_PALETTES[scheme] ?? CHART_PALETTES.Auto, 5);
+  }
+  // Boundary: 1 field → choropleth sequential ramp (matches quantile apply).
+  // 2+ fields → scheme qualitative colors (matches predominance / chart family).
+  if (fieldCount <= 1) {
+    return CHOROPLETH_RAMPS[scheme] ?? CHOROPLETH_RAMPS.Auto;
+  }
+  return spanPalette(CHART_PALETTES[scheme] ?? CHART_PALETTES.Auto, Math.min(fieldCount, 5));
+}
+
+function Ramp({ colors }: { colors: RGB[] }) {
   return (
     <span className="color-scheme-ramp" aria-hidden>
       {colors.map((rgb, i) => (
@@ -42,12 +54,12 @@ function Ramp({ colors }: { colors: [number, number, number][] }) {
   );
 }
 
-export function ColorSchemePicker({ value, onChange, mode = "boundary" }: Props) {
+export function ColorSchemePicker({ value, onChange, mode = "boundary", fieldCount = 1 }: Props) {
   const [open, setOpen] = useState(false);
   const rootRef = useRef<HTMLDivElement>(null);
   const listId = useId();
   const active = (COLOR_SCHEMES.includes(value as ColorScheme) ? value : "Auto") as ColorScheme;
-  const activeColors = rampFor(active, mode);
+  const activeColors = rampFor(active, mode, fieldCount);
 
   useEffect(() => {
     if (!open) return;
@@ -100,7 +112,7 @@ export function ColorSchemePicker({ value, onChange, mode = "boundary" }: Props)
                       setOpen(false);
                     }}
                   >
-                    <Ramp colors={rampFor(scheme, mode)} />
+                    <Ramp colors={rampFor(scheme, mode, fieldCount)} />
                     <span className="color-scheme-name">{scheme}</span>
                   </button>
                 </li>
