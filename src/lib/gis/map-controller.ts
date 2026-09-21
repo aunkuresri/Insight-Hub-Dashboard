@@ -197,7 +197,7 @@ export class MapController {
     esriConfig.request.timeout = 120000;
 
     const webmap = new WebMap({
-      portalItem: { id: config.webMapId },
+      portalItem: { id: config.webmapId },
     });
     this.map = webmap as EsriWebMap;
 
