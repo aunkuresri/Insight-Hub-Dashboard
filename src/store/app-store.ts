@@ -61,6 +61,9 @@ type AppState = {
   mapTitle: string;
   mapScale: number;
   currentAdminLevel: AdminLevelId | null;
+  autoLevel: AdminLevelId;
+  levelMode: "auto" | "manual";
+  manualLevel: AdminLevelId;
   leftOpen: boolean;
   rightOpen: boolean;
   filters: LocationFilters;
@@ -88,6 +91,8 @@ type AppState = {
   setMapReady: (ready: boolean, title?: string) => void;
   setMapError: (message: string | null) => void;
   setScale: (level: AdminLevelId | null, scale: number) => void;
+  setLevelMode: (mode: "auto" | "manual") => void;
+  setManualLevel: (level: AdminLevelId) => void;
   setLeftOpen: (open: boolean) => void;
   setRightOpen: (open: boolean) => void;
   setFilter: (level: AdminLevelId, value: string | null) => Promise<void>;
@@ -120,6 +125,9 @@ export const useAppStore = create<AppState>((set, get) => ({
   mapTitle: "",
   mapScale: 0,
   currentAdminLevel: null,
+  autoLevel: "division",
+  levelMode: "auto",
+  manualLevel: "division",
   leftOpen: true,
   rightOpen: true,
   filters: emptyFilters(),
@@ -145,12 +153,20 @@ export const useAppStore = create<AppState>((set, get) => ({
   composition: [],
   featureCount: 0,
 
-  currentLevel: () => get().currentAdminLevel ?? ADMIN_LEVELS[0]?.id ?? "division",
+  currentLevel: () =>
+    get().levelMode === "manual" ? get().manualLevel : get().autoLevel,
 
   setMapReady: (ready, title) =>
     set({ mapReady: ready, mapTitle: title ?? get().mapTitle, mapError: ready ? null : get().mapError }),
   setMapError: (message) => set({ mapError: message }),
-  setScale: (level, scale) => set({ currentAdminLevel: level, mapScale: scale }),
+  setScale: (level, scale) =>
+    set({
+      currentAdminLevel: level,
+      mapScale: scale,
+      autoLevel: level ?? get().autoLevel,
+    }),
+  setLevelMode: (mode) => set({ levelMode: mode, manualLevel: get().autoLevel }),
+  setManualLevel: (level) => set({ manualLevel: level, levelMode: "manual" }),
   setLeftOpen: (open) => set({ leftOpen: open }),
   setRightOpen: (open) => set({ rightOpen: open }),
 
@@ -287,7 +303,6 @@ export const useAppStore = create<AppState>((set, get) => ({
         }
       }
 
-      // Map KPI bar always uses Incident group
       const mapIncidentKpis: KpiValue[] = [];
       for (const field of kpiFieldsForGroup("Incident").slice(0, 6)) {
         const resolved = resolveField(schema, field.id);
@@ -313,7 +328,6 @@ export const useAppStore = create<AppState>((set, get) => ({
         }
       }
 
-      // Ranking rows (simple attribute query)
       const ranking: RankingRow[] = [];
       const nameField = resolveFieldName(schema, level.nameField) ?? level.nameField;
       const rankFields = state.rankingColumns
@@ -330,7 +344,6 @@ export const useAppStore = create<AppState>((set, get) => ({
             returnGeometry: false,
             where,
           });
-          const primary = rankFields[0]!.name;
           const rows: RankingRow[] = features
             .map((f) => {
               const name = f.attributes?.[nameField] != null ? String(f.attributes[nameField]) : "";
@@ -350,7 +363,6 @@ export const useAppStore = create<AppState>((set, get) => ({
         }
       }
 
-      // Composition slices from first composition chart fields
       const composition: CompositionSlice[] = kpis
         .filter((k) => k.value != null && (k.value as number) > 0)
         .map((k) => ({ id: k.id, label: k.label, value: k.value as number }));
