@@ -38,7 +38,9 @@ const RANKING_COLUMN_COUNT = 3;
 
 /** Fixed Incident fields for the map KPI bar — independent of analytics window group. */
 const MAP_INCIDENT_KPI_IDS = [
-  "Total_Incidents",
+  "Crime",
+  "Judgmental",
+  "Resilience",
   "Total_Death",
   "Total_Injured",
 ] as const;
