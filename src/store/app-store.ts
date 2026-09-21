@@ -6,7 +6,7 @@ import {
   type AdminLevelId,
   type LayerGroupId,
   type LocationFilters,
-  emptyLocationFilters,
+  emptyFilters,
 } from "@/config/layers";
 import type { ColorSchemeId } from "@/config/symbology-schemes";
 import { getMapController } from "@/lib/gis/map-controller";
@@ -79,7 +79,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   mapTitle: "",
   mapScale: 0,
   currentAdminLevel: null,
-  locationFilters: emptyLocationFilters(),
+  locationFilters: emptyFilters(),
   toast: null,
   applied: { boundary: null, chart: null },
   symLayerGroup: "boundary",
@@ -112,7 +112,7 @@ export const useAppStore = create<AppState>((set, get) => ({
 
   clearLocationFilters: async () => {
     const map = getMapController();
-    const filters = emptyLocationFilters();
+    const filters = emptyFilters();
     set({ locationFilters: filters });
     if (map) {
       await map.applyFilters(filters);
