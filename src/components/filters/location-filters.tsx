@@ -35,10 +35,10 @@ export function LocationFilters({ variant = "panel" }: LocationFiltersProps) {
     };
   }, [openId]);
 
-  const hasFilter = filters ? Object.values(filters).some(Boolean) : false;
+  const hasFilter = Object.values(filters).some(Boolean);
 
   const selectValue = (levelId: AdminLevelId, name: string | null) => {
-    void setFilter?.(levelId, name);
+    void setFilter(levelId, name);
     setOpenId(null);
   };
 
@@ -46,10 +46,10 @@ export function LocationFilters({ variant = "panel" }: LocationFiltersProps) {
     return (
       <div className="header-filters" role="group" aria-label="Location filters" ref={rootRef}>
         {ADMIN_LEVELS.map((level) => {
-          const parentReady = !level.parentId || Boolean(filters?.[level.parentId]);
+          const parentReady = !level.parentId || Boolean(filters[level.parentId]);
           const disabled = !mapReady || !parentReady;
-          const value = filters?.[level.id] ?? "";
-          const list = options?.[level.id] ?? [];
+          const value = filters[level.id] ?? "";
+          const list = options[level.id] ?? [];
           const isOpen = openId === level.id;
           const isActive = Boolean(value);
           const allLabel =
@@ -62,41 +62,58 @@ export function LocationFilters({ variant = "panel" }: LocationFiltersProps) {
           return (
             <div
               key={level.id}
-              className={`header-filter-dd${isOpen ? " is-open" : ""}${isActive ? " is-active" : ""}${disabled ? " is-disabled" : ""}`}
+              className={`header-filter-dd${isOpen ? " is-open" : ""}${isActive ? " is-active" : ""}`}
             >
               <button
                 type="button"
-                className="header-filter-trigger"
+                className="header-filter-dd-btn"
                 disabled={disabled}
-                aria-haspopup="listbox"
                 aria-expanded={isOpen}
+                aria-haspopup="listbox"
+                title={isActive ? value : level.label}
                 onClick={(e) => {
                   e.stopPropagation();
                   if (disabled) return;
-                  setOpenId(isOpen ? null : level.id);
+                  setOpenId((cur) => (cur === level.id ? null : level.id));
                 }}
               >
-                <span className="header-filter-label">{level.shortLabel}</span>
-                <span className="header-filter-value">{value || allLabel}</span>
+                <span className="header-filter-dd-label">{level.label}</span>
+                {isActive ? (
+                  <span className="header-filter-dot" aria-label={`Selected: ${value}`} />
+                ) : null}
                 <calcite-icon icon={isOpen ? "chevron-up" : "chevron-down"} scale="s" />
               </button>
-              {isOpen && !disabled ? (
-                <ul className="header-filter-menu" role="listbox">
-                  <li role="option">
+              {isOpen ? (
+                <ul
+                  className="header-filter-dd-menu"
+                  role="listbox"
+                  aria-label={level.label}
+                  onClick={(e) => e.stopPropagation()}
+                  onMouseDown={(e) => e.stopPropagation()}
+                >
+                  <li role="option" aria-selected={!value}>
                     <button
                       type="button"
-                      className={!value ? "is-selected" : undefined}
-                      onClick={() => selectValue(level.id as AdminLevelId, null)}
+                      className={`header-filter-dd-option${!value ? " is-active" : ""}`}
+                      onMouseDown={(e) => e.preventDefault()}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        selectValue(level.id as AdminLevelId, null);
+                      }}
                     >
                       {allLabel}
                     </button>
                   </li>
                   {list.map((name) => (
-                    <li key={name} role="option">
+                    <li key={name} role="option" aria-selected={value === name}>
                       <button
                         type="button"
-                        className={value === name ? "is-selected" : undefined}
-                        onClick={() => selectValue(level.id as AdminLevelId, name)}
+                        className={`header-filter-dd-option${value === name ? " is-active" : ""}`}
+                        onMouseDown={(e) => e.preventDefault()}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          selectValue(level.id as AdminLevelId, name);
+                        }}
                       >
                         {name}
                       </button>
@@ -115,7 +132,7 @@ export function LocationFilters({ variant = "panel" }: LocationFiltersProps) {
             title="Clear filters"
             onClick={(e) => {
               e.stopPropagation();
-              void clearFilters?.();
+              void clearFilters();
               setOpenId(null);
             }}
           >
@@ -130,10 +147,10 @@ export function LocationFilters({ variant = "panel" }: LocationFiltersProps) {
   return (
     <section className="filter-stack">
       {ADMIN_LEVELS.map((level) => {
-        const parentReady = !level.parentId || Boolean(filters?.[level.parentId]);
+        const parentReady = !level.parentId || Boolean(filters[level.parentId]);
         const disabled = !mapReady || !parentReady;
-        const value = filters?.[level.id] ?? "";
-        const list = options?.[level.id] ?? [];
+        const value = filters[level.id] ?? "";
+        const list = options[level.id] ?? [];
         return (
           <label key={level.id} className="field">
             <span className="field-label-bold">{level.label}</span>
@@ -142,7 +159,7 @@ export function LocationFilters({ variant = "panel" }: LocationFiltersProps) {
               disabled={disabled}
               onChange={(event) => {
                 const next = event.target.value || null;
-                void setFilter?.(level.id as AdminLevelId, next);
+                void setFilter(level.id as AdminLevelId, next);
               }}
             >
               <option value="">
@@ -168,7 +185,7 @@ export function LocationFilters({ variant = "panel" }: LocationFiltersProps) {
             className="header-filter-clear"
             aria-label="Clear filters"
             title="Clear filters"
-            onClick={() => void clearFilters?.()}
+            onClick={() => void clearFilters()}
           >
             <calcite-icon icon="erase" scale="s" />
             Clear filters
