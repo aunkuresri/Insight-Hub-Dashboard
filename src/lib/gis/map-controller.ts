@@ -304,7 +304,7 @@ export class MapController {
   }
 
   schemaOf(layer: EsriLayer): FieldInfo[] {
-    return (layer.fields ?? []).map((f) => toFieldInfoFromEsri(f));
+    return toFieldInfoFromEsri(layer.fields ?? []);
   }
 
   async queryAttributes(
