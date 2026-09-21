@@ -200,6 +200,7 @@ export function SymbologyPanel() {
           value={scheme}
           onChange={setScheme}
           mode={group === "chart" ? "chart" : "boundary"}
+          fieldCount={fields.length}
         />
 
         {group === "chart" ? (
