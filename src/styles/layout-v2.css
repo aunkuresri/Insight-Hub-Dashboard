@@ -35,7 +35,7 @@
   max-width: 100%;
   box-sizing: border-box;
   padding: 8px 10px;
-  background: #f4f6f8;
+  background: #eef1f4;
   border-bottom: 1px solid rgb(0 0 0 / 0.1);
   z-index: 5;
 }
@@ -50,15 +50,16 @@
   box-sizing: border-box;
 }
 
-/* Base card — clean white, subtle border (ArcGIS indicator style) */
+/* Base card — soft shade + left accent (ArcGIS indicator style) */
 .map-kpi-card {
   min-width: 0;
   max-width: none;
   width: 100%;
   box-sizing: border-box;
-  padding: 10px 12px;
+  padding: 10px 12px 10px 14px;
   background: #ffffff;
-  border: 1px solid rgb(0 0 0 / 0.1);
+  border: 1px solid rgb(0 0 0 / 0.08);
+  border-left: 3px solid #0079c1;
   border-radius: 4px;
   box-shadow: 0 1px 2px rgb(0 0 0 / 0.04);
 }
@@ -79,30 +80,70 @@
   width: 26px;
   height: 26px;
   border-radius: 4px;
-  background: #e8f4fc;
+  background: #dceef8;
   color: #0079c1;
   flex-shrink: 0;
 }
 
-/* Very light professional tones — Esri / ArcGIS Dashboard palette */
+/* Tone shades — card fill + left border + icon (Esri palette) */
+.map-kpi-card--red {
+  background: #fdf6f4;
+  border-color: rgb(199 70 26 / 0.18);
+  border-left-color: #c7461a;
+}
+
 .map-kpi-card--red .map-kpi-card-icon {
-  background: #fdf0ed;
+  background: #f8e4de;
   color: #c7461a;
 }
 
+.map-kpi-card--red .map-kpi-card-value {
+  color: #9e3614;
+}
+
+.map-kpi-card--green {
+  background: #f4faf5;
+  border-color: rgb(53 172 70 / 0.2);
+  border-left-color: #35ac46;
+}
+
 .map-kpi-card--green .map-kpi-card-icon {
-  background: #eef8f0;
-  color: #35ac46;
+  background: #dff0e2;
+  color: #2a8a38;
+}
+
+.map-kpi-card--green .map-kpi-card-value {
+  color: #1f6b2a;
+}
+
+.map-kpi-card--blue {
+  background: #f3f8fc;
+  border-color: rgb(0 121 193 / 0.18);
+  border-left-color: #0079c1;
 }
 
 .map-kpi-card--blue .map-kpi-card-icon {
-  background: #e8f4fc;
+  background: #d6eaf6;
   color: #0079c1;
 }
 
+.map-kpi-card--blue .map-kpi-card-value {
+  color: #005e95;
+}
+
+.map-kpi-card--yellow {
+  background: #fdfaf0;
+  border-color: rgb(209 154 0 / 0.22);
+  border-left-color: #d19a00;
+}
+
 .map-kpi-card--yellow .map-kpi-card-icon {
-  background: #fef8e8;
-  color: #d19a00;
+  background: #f7eccc;
+  color: #b88600;
+}
+
+.map-kpi-card--yellow .map-kpi-card-value {
+  color: #8a6a00;
 }
 
 .map-kpi-card-label {
@@ -202,7 +243,7 @@
   flex-shrink: 0;
   padding: 12px 16px;
   border-bottom: 1px solid rgb(0 0 0 / 0.1);
-  background: #f8f8f8;
+  background: #f0f4f8;
 }
 
 .analytics-modal-body {
