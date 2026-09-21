@@ -53,7 +53,6 @@ export type EsriLayer = {
   opacity: number;
   minScale: number;
   maxScale: number;
-  /** Actual object-id field name on the service (often "objectid"). */
   objectIdField?: string;
   globalIdField?: string;
   definitionExpression?: string;
@@ -71,7 +70,6 @@ export type EsriLayer = {
   queryExtent: (query: Record<string, unknown>) => Promise<{ extent: unknown; count: number }>;
   queryFeatureCount: (query: Record<string, unknown>) => Promise<number>;
   createQuery?: () => Record<string, unknown>;
-  /** Feature service sublayer URL (…/FeatureServer/N). */
   url?: string;
   applyEdits?: (edits: {
     updateFeatures?: Array<{ attributes: Record<string, unknown> }>;
@@ -104,10 +102,13 @@ type EsriMapView = {
   goTo: (target: unknown, opts?: unknown) => Promise<void>;
   destroy: () => void;
   on: (event: string, cb: (ev: unknown) => void) => { remove: () => void };
-  hitTest: (screenPoint: unknown, opts?: unknown) => Promise<{ results: Array<{ graphic?: EsriFeature & { layer?: EsriLayer }; mapPoint?: unknown }> }>;
+  hitTest: (screenPoint: unknown, opts?: unknown) => Promise<{
+    results: Array<{ graphic?: EsriFeature & { layer?: EsriLayer }; mapPoint?: unknown }>;
+  }>;
   toMap?: (screenPoint: { x: number; y: number }) => unknown;
   viewpoint?: unknown;
   extent?: unknown;
+  whenLayerView: (layer: EsriLayer) => Promise<{ highlight: (id: unknown) => { remove: () => void } }>;
 };
 
 type MapControllerEvents = {
@@ -126,10 +127,6 @@ function isChartLayer(layer: EsriLayer): boolean {
   return t.includes("chart") || t.includes("pie");
 }
 
-function isBoundaryLayer(layer: EsriLayer): boolean {
-  return !isChartLayer(layer) && layer.type === "feature";
-}
-
 let singleton: MapController | null = null;
 
 export class MapController {
@@ -143,6 +140,8 @@ export class MapController {
   private events: MapControllerEvents = {};
   private scaleHandle: { remove: () => void } | null = null;
   private clickHandle: { remove: () => void } | null = null;
+  private highlightHandle: { remove: () => void } | null = null;
+  private extentOverride: unknown | null = null;
 
   async init(container: HTMLDivElement, events: MapControllerEvents = {}): Promise<void> {
     this.events = events;
@@ -282,9 +281,7 @@ export class MapController {
 
   featureLayers(): EsriLayer[] {
     if (!this.map) return [];
-    return this.map.allLayers
-      .toArray()
-      .filter((l) => l.type === "feature") as EsriLayer[];
+    return this.map.allLayers.toArray().filter((l) => l.type === "feature") as EsriLayer[];
   }
 
   layersFor(group: LayerGroupId, level: AdminLevelId | "all"): EsriLayer[] {
@@ -316,19 +313,75 @@ export class MapController {
     return result.features;
   }
 
-  applyDefinitionExpression(filters: LocationFilters): void {
-    for (const layer of this.featureLayers()) {
-      const level = this.detectLevel(layer);
-      layer.definitionExpression = whereForLevel(level, filters) || "1=1";
+  findLayer(title: string): EsriLayer | null {
+    const t = title.toLowerCase();
+    return (
+      this.featureLayers().find(
+        (l) =>
+          l.title.toLowerCase() === t ||
+          l.id.toLowerCase() === t ||
+          l.title.toLowerCase().includes(t),
+      ) ?? null
+    );
+  }
+
+  async applyFilters(filters: LocationFilters): Promise<void> {
+    for (const level of ADMIN_LEVELS) {
+      const where = whereForLevel(level, filters) || "1=1";
+      for (const group of ["boundary", "chart"] as const) {
+        const layer = this.findLayer(level.layerTitles[group]);
+        if (layer) layer.definitionExpression = where;
+      }
     }
   }
 
-  private detectLevel(layer: EsriLayer): AdminLevelId | null {
-    const t = `${layer.title} ${layer.id}`.toLowerCase();
-    for (const level of ADMIN_LEVELS) {
-      if (t.includes(level.id) || t.includes(level.label.toLowerCase())) return level.id;
+  async resetExtent(): Promise<void> {
+    if (!this.view || !this.initialViewpoint) return;
+    this.extentOverride = null;
+    await this.view.goTo(this.initialViewpoint, { duration: 700 });
+  }
+
+  currentExtent(): unknown | null {
+    return this.extentOverride ?? this.view?.extent ?? null;
+  }
+
+  async queryCount(layer: EsriLayer, where?: string, geometry?: unknown | null): Promise<number> {
+    try {
+      return await layer.queryFeatureCount({
+        where: where ?? "1=1",
+        geometry: geometry ?? undefined,
+      });
+    } catch {
+      return 0;
     }
-    return null;
+  }
+
+  async queryStats(
+    layer: EsriLayer,
+    stats: Array<{ statisticType: string; onStatisticField: string; outStatisticFieldName: string }>,
+    where?: string,
+    geometry?: unknown | null,
+  ): Promise<Array<Record<string, unknown>>> {
+    try {
+      const result = await layer.queryFeatures({
+        where: where ?? "1=1",
+        geometry: geometry ?? undefined,
+        outStatistics: stats,
+        returnGeometry: false,
+      });
+      return result.features.map((f) => f.attributes);
+    } catch {
+      return [];
+    }
+  }
+
+  clearHighlight(): void {
+    try {
+      this.highlightHandle?.remove();
+    } catch {
+      /* ignore */
+    }
+    this.highlightHandle = null;
   }
 
   async goHome(): Promise<void> {
@@ -366,7 +419,7 @@ export class MapController {
     }
   }
 
-  /** Value + predominant % text labels on pie chart symbols. */
+  /** Value + predominant % text labels on pie chart symbols — e.g. "1,250 (42%)". */
   private applyChartValueLabels(
     layer: EsriLayer,
     chartFields: string[],
@@ -416,9 +469,9 @@ export class MapController {
   resetRenderers(group?: LayerGroupId): void {
     for (const layer of this.featureLayers()) {
       if (group) {
-        const isChart = isChartLayer(layer);
-        if (group === "chart" && !isChart) continue;
-        if (group === "boundary" && isChart) continue;
+        const chart = isChartLayer(layer);
+        if (group === "chart" && !chart) continue;
+        if (group === "boundary" && chart) continue;
       }
       if (this.originalRenderers.has(layer.id)) {
         layer.renderer = this.originalRenderers.get(layer.id) as EsriLayer["renderer"];
@@ -444,6 +497,7 @@ export class MapController {
   }
 
   destroy(): void {
+    this.clearHighlight();
     this.scaleHandle?.remove();
     this.clickHandle?.remove();
     this.scaleHandle = null;
