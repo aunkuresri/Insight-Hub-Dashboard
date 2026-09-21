@@ -73,7 +73,7 @@ type AppState = {
 };
 
 function describeMethod(legend: AppliedLegend | null): string {
-  return legend?.methodLabel ?? "symbology";
+  return legend?.method ?? "symbology";
 }
 
 const emptySymFields = (): SymFieldsByGroup => ({ boundary: [], chart: [] });
@@ -306,7 +306,7 @@ export const useAppStore = create<AppState>((set, get) => ({
         toast: {
           kind: "success",
           message: lastLegend
-            ? `${lastLegend.methodLabel} applied to ${symLayerGroup} layers.`
+            ? `${lastLegend.method} applied to ${symLayerGroup} layers.`
             : "Symbology applied.",
         },
       });
