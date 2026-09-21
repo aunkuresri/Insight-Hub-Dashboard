@@ -23,7 +23,7 @@
   --color-warn: #d19a00;
   --color-border: rgb(0 0 0 / 0.1);
   --color-border-strong: rgb(0 0 0 / 0.18);
-  --color-header: #eef3f7;
+  --color-header: #ffffff;
 
   --chart-1: #0079c1;
   --chart-2: #35ac46;
@@ -110,7 +110,7 @@
   gap: 12px;
   align-items: center;
   padding: 0 16px;
-  background: linear-gradient(180deg, #f7fafc 0%, #eef3f7 100%);
+  background: #ffffff;
   border-bottom: 1px solid rgb(0 0 0 / 0.1);
   box-shadow:
     0 1px 3px rgb(0 0 0 / 0.06),
