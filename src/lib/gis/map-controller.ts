@@ -144,6 +144,7 @@ export class MapController {
   private clickHandle: { remove: () => void } | null = null;
   private highlightHandle: { remove: () => void } | null = null;
   private extentOverride: unknown | null = null;
+  legendHost: HTMLDivElement | null = null;
   private onOpenLeft: (() => void) | null = null;
   private onOpenRight: (() => void) | null = null;
 
@@ -254,17 +255,22 @@ export class MapController {
       }
     }
 
-    this.scaleHandle = view.on("watch:scale", () => {
-      const scale = view.scale;
-      const level = scaleToLevel(scale);
-      this.events.onScale?.(level, scale);
-    });
+    const scaleWatcher = (view as { watch?: (prop: string, cb: (v: number) => void) => { remove: () => void } }).watch;
+    if (typeof scaleWatcher === "function") {
+      this.scaleHandle = scaleWatcher.call(view, "scale", (scale: number) => {
+        this.events.onScale?.(scaleToLevel(scale), scale);
+      });
+    } else {
+      this.scaleHandle = view.on("resize", () => {
+        this.events.onScale?.(scaleToLevel(view.scale), view.scale);
+      });
+    }
 
     this.clickHandle = view.on("click", async (ev: unknown) => {
       const e = ev as { x: number; y: number };
       try {
         const hit = await view.hitTest(e);
-        const graphic = hit.results.find((r) => r.graphic?.layer)?.graphic;
+        const graphic = (hit.results ?? []).find((r) => r.graphic?.layer)?.graphic;
         if (graphic?.layer && graphic.attributes) {
           this.events.onSelection?.({
             layerId: graphic.layer.id,
@@ -337,8 +343,73 @@ export class MapController {
       const where = whereForLevel(level, filters) || "1=1";
       for (const group of ["boundary", "chart"] as const) {
         const layer = this.findLayer(level.layerTitles[group]);
-        if (layer) layer.definitionExpression = where;
+        if (!layer) continue;
+        layer.definitionExpression = where;
+        try {
+          (layer as { refresh?: () => void }).refresh?.();
+        } catch {
+          /* optional */
+        }
       }
+    }
+    await this.zoomToFilters(filters);
+  }
+
+  async zoomToFilters(filters: LocationFilters): Promise<void> {
+    if (!this.view) return;
+    const deepest = [...ADMIN_LEVELS].reverse().find((level) => filters[level.id]);
+    if (!deepest) {
+      await this.resetExtent();
+      return;
+    }
+    const layer = this.findLayer(deepest.layerTitles.boundary);
+    if (!layer) return;
+    const where = whereForLevel(deepest, filters) || "1=1";
+    try {
+      const result = await layer.queryExtent({ where, returnGeometry: true });
+      if (result.count > 0 && result.extent) {
+        await this.view.goTo(result.extent, { duration: 700 });
+      }
+    } catch {
+      /* keep current extent */
+    }
+  }
+
+  setExtentOverride(extent: unknown | null): void {
+    if (!extent) {
+      this.extentOverride = null;
+      return;
+    }
+    const ext = extent as { clone?: () => unknown };
+    this.extentOverride = typeof ext.clone === "function" ? ext.clone() : extent;
+  }
+
+  async zoomToLevel(levelId: AdminLevelId): Promise<void> {
+    if (!this.view) return;
+    const level = ADMIN_LEVELS.find((l) => l.id === levelId);
+    if (!level) return;
+    try {
+      await this.view.goTo({ scale: level.viewScale }, { duration: 700 });
+    } catch {
+      /* ignore */
+    }
+  }
+
+  async zoomToName(levelId: AdminLevelId, name: string): Promise<void> {
+    if (!this.view || !name) return;
+    const level = ADMIN_LEVELS.find((l) => l.id === levelId);
+    if (!level) return;
+    const layer = this.findLayer(level.layerTitles.boundary);
+    if (!layer) return;
+    const nameField = level.nameField;
+    const where = `UPPER(${nameField}) = UPPER('${name.replace(/'/g, "''")}')`;
+    try {
+      const result = await layer.queryExtent({ where, returnGeometry: true });
+      if (result.count > 0 && result.extent) {
+        await this.view.goTo(result.extent, { duration: 700 });
+      }
+    } catch {
+      /* ignore */
     }
   }
 
@@ -349,7 +420,13 @@ export class MapController {
   }
 
   currentExtent(): unknown | null {
-    return this.extentOverride ?? this.view?.extent ?? null;
+    if (this.extentOverride) {
+      const ext = this.extentOverride as { clone?: () => unknown };
+      return typeof ext.clone === "function" ? ext.clone() : this.extentOverride;
+    }
+    if (!this.view?.extent) return null;
+    const ext = this.view.extent as { clone?: () => unknown };
+    return typeof ext.clone === "function" ? ext.clone() : this.view.extent;
   }
 
   async queryCount(layer: EsriLayer, where?: string, geometry?: unknown | null): Promise<number> {
