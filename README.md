@@ -3,8 +3,8 @@
 Map-centric web application for administrative intelligence in Bangladesh.  
 Built with **ArcGIS Maps SDK for JavaScript**, **Calcite Design System**, and a React workbench layout similar to ArcGIS Dashboards / Experience Builder.
 
-**Live demo:** [https://crimedashboard.vercel.app/](https://crimedashboard.vercel.app/)  
-**Repository:** [https://github.com/aunkuresri/crystal-yarrow-rose-monarch](https://github.com/aunkuresri/crystal-yarrow-rose-monarch)
+**Live demo:** [https://insight-hub-dashboard-ten.vercel.app/](https://insight-hub-dashboard-ten.vercel.app/)  
+**Repository:** [https://github.com/aunkuresri/Insight-Hub-Dashboard](https://github.com/aunkuresri/Insight-Hub-Dashboard)
 
 ---
 
@@ -55,8 +55,8 @@ Built with **ArcGIS Maps SDK for JavaScript**, **Calcite Design System**, and a 
 
 ```bash
 # Clone
-git clone https://github.com/aunkuresri/crystal-yarrow-rose-monarch.git
-cd crystal-yarrow-rose-monarch
+git clone https://github.com/aunkuresri/Insight-Hub-Dashboard.git
+cd Insight-Hub-Dashboard
 
 # Install dependencies
 npm install
