@@ -1,1 +1,4 @@
-import { PLACEHOLDER_USE_RESTORE_FILE }
+/**
+ * SEE artifacts/map-controller.RESTORE.ts - content must be full file
+ */
+export {};
