@@ -77,6 +77,27 @@ export function describeMethod(layerGroup: "boundary" | "chart", fieldCount: num
   return methodForBoundary(fieldCount);
 }
 
+/**
+ * Pick N distinct colors from a scheme so picker preview and map match.
+ * Spans 1st … last of the palette (same rule as chart slices).
+ */
+function colorsFromScheme(requestedScheme: string, count: number): RGB[] {
+  const palette = CHART_PALETTES[requestedScheme] ?? CHART_PALETTES.Auto;
+  if (count <= 0) return [];
+  if (count === 1) return [palette[0] ?? SINGLE_SYMBOL_COLORS[requestedScheme] ?? SINGLE_SYMBOL_COLORS.Auto];
+  if (palette.length === 1) return Array.from({ length: count }, () => palette[0]!);
+  const out: RGB[] = [];
+  for (let i = 0; i < count; i += 1) {
+    if (i === count - 1) {
+      out.push(palette[palette.length - 1]!);
+    } else {
+      const idx = Math.min(i, palette.length - 2);
+      out.push(palette[idx]!);
+    }
+  }
+  return out;
+}
+
 export function buildChartRenderer(args: {
   rows: Row[];
   fields: string[];
@@ -247,7 +268,8 @@ function buildChoropleth(args: {
   for (let i = 0; i < classCount; i += 1) {
     const minV = i === 0 ? edges[0]! : edges[i]!;
     const maxV = edges[i + 1]!;
-    const rgb = ramp[i]!;
+    // Use exact stops from the ramp the user saw in the color scheme picker.
+    const rgb = ramp[Math.min(i, ramp.length - 1)]!;
     const classLabel =
       i === 0
         ? `≤ ${formatBreak(maxV)}`
@@ -457,8 +479,9 @@ function buildPredominance(args: {
   requestedScheme: string;
 }): BuildResult {
   const { rows, fields, aliases, requestedScheme } = args;
-  const scheme = resolveScheme(requestedScheme, "Predominant Variable");
-  const palette = scheme === "Qualitative - Muted" ? QUALITATIVE_MUTED : QUALITATIVE_BRIGHT;
+  // Use the same scheme palette the user selected in the picker (span 1st…last),
+  // not a forced Qualitative Bright/Muted remap that ignored their choice.
+  const palette = colorsFromScheme(requestedScheme, fields.length);
   const observed = new Set<string>();
 
   for (const row of rows) {
@@ -523,7 +546,7 @@ function buildPredominance(args: {
     },
     legend: {
       method: "Predominant Variable",
-      scheme,
+      scheme: requestedScheme,
       title: "Predominant Variable",
       fields: fields.map((name) => ({ id: name, name, label: aliases[name] ?? name })),
       colors: Object.fromEntries(classes.map((c) => [c.value ?? c.label, c.color])),
