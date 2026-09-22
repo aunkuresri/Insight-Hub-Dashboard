@@ -405,7 +405,7 @@ export function DataUpdateWindow() {
                       const on = fieldIds.includes(field.id);
                       return (
                         <li key={field.id} role="option" aria-selected={on}>
-                          <label className={`check-list-item${on ? " is-selected" : ""`}>
+                          <label className={`check-list-item${on ? " is-selected" : ""}`}>
                             <span className="check-list-box" aria-hidden="true">
                               <input
                                 type="checkbox"
@@ -499,10 +499,23 @@ export function DataUpdateWindow() {
                 </label>
                 {fileInfo ? <p className="section-hint">{fileInfo}</p> : null}
               </section>
+
+              {error ? (
+                <div className="data-update-alert data-update-alert--error" role="alert">
+                  {error}
+                </div>
+              ) : null}
+              {resultMessage ? (
+                <div className="data-update-alert data-update-alert--ok" role="status">
+                  {resultMessage}
+                </div>
+              ) : null}
             </>
-          ) : (
+          ) : null}
+
+          {mainTab === "modify" ? (
             <>
-              <div className="data-update-subtabs" role="tablist" aria-label="Modify Data sections">
+              <div className="data-update-subtabs" role="tablist" aria-label="Modify schema tools">
                 <button
                   type="button"
                   className={modifyTab === "add_field" ? "seg-btn seg-active" : "seg-btn"}
@@ -510,7 +523,6 @@ export function DataUpdateWindow() {
                   aria-selected={modifyTab === "add_field"}
                   onClick={() => setModifyTab("add_field")}
                 >
-                  <calcite-icon icon="plus" scale="s" />
                   Add Field
                 </button>
                 <button
@@ -520,7 +532,6 @@ export function DataUpdateWindow() {
                   aria-selected={modifyTab === "modify_field"}
                   onClick={() => setModifyTab("modify_field")}
                 >
-                  <calcite-icon icon="edit-attributes" scale="s" />
                   Modify Field
                 </button>
                 <button
@@ -530,7 +541,6 @@ export function DataUpdateWindow() {
                   aria-selected={modifyTab === "modify_group"}
                   onClick={() => setModifyTab("modify_group")}
                 >
-                  <calcite-icon icon="layer-service" scale="s" />
                   Create Group
                 </button>
               </div>
@@ -551,7 +561,7 @@ export function DataUpdateWindow() {
                         className="data-update-input"
                         value={addFieldName}
                         onChange={(e) => setAddFieldName(e.target.value)}
-                        placeholder="e.g. New_Indicator"
+                        placeholder="e.g. crime_rate"
                         autoComplete="off"
                       />
                     </label>
@@ -561,7 +571,7 @@ export function DataUpdateWindow() {
                         className="data-update-input"
                         value={addFieldLabel}
                         onChange={(e) => setAddFieldLabel(e.target.value)}
-                        placeholder="e.g. New Indicator"
+                        placeholder="e.g. Crime Rate"
                         autoComplete="off"
                       />
                     </label>
@@ -572,11 +582,9 @@ export function DataUpdateWindow() {
                         value={addFieldType}
                         onChange={(e) => setAddFieldType(e.target.value)}
                       >
-                        {(["Double", "Integer", "String", "Date"] as const).map((ty) => (
-                          <option key={ty} value={ty}>
-                            {ty}
-                          </option>
-                        ))}
+                        <option value="Double">Double (number)</option>
+                        <option value="Integer">Integer</option>
+                        <option value="String">String (text)</option>
                       </select>
                     </label>
                     <label className="data-update-field">
@@ -694,56 +702,49 @@ export function DataUpdateWindow() {
                       Create group
                     </button>
                   </div>
-                  <div className="section-head" style={{ marginTop: 8 }}>
+
+                  <div className="section-head" style={{ marginTop: "1rem" }}>
                     <h2>Existing groups</h2>
                   </div>
-                  <div className="data-update-group-list" role="list">
+                  <ul className="data-update-group-list" role="list">
                     {catalog.map((g) => (
-                      <div key={g.id} className="data-update-group-item" role="listitem">
-                        <div className="data-update-group-item-main">
-                          <span className="data-update-group-item-label">{g.label}</span>
+                      <li key={g.id} className="data-update-group-item" role="listitem">
+                        <span>
+                          <strong>{g.label}</strong>
+                          <span className="method-tag">{g.id}</span>
                           <span className="method-tag">{g.fields.length} fields</span>
-                        </div>
+                        </span>
                         <button
                           type="button"
                           className="data-update-icon-btn"
                           title="Remove group"
-                          aria-label={`Remove ${g.label}`}
+                          aria-label={`Remove group ${g.label}`}
                           onClick={() => removeGroup(g.id)}
                         >
                           <calcite-icon icon="trash" scale="s" />
                         </button>
-                      </div>
+                      </li>
                     ))}
-                  </div>
+                  </ul>
                 </section>
               ) : null}
+
+              {error ? (
+                <div className="data-update-alert data-update-alert--error" role="alert">
+                  {error}
+                </div>
+              ) : null}
+              {resultMessage ? (
+                <div className="data-update-alert data-update-alert--ok" role="status">
+                  {resultMessage}
+                </div>
+              ) : null}
             </>
-          )}
+          ) : null}
         </div>
 
         <footer className="data-update-footer">
-          <div className="data-update-result">
-            {error ? (
-              <div className="data-update-banner data-update-banner--danger" role="alert">
-                <strong>Error</strong>
-                <span>{error}</span>
-              </div>
-            ) : null}
-            {resultMessage && !error ? (
-              <div className="data-update-banner data-update-banner--success" role="status">
-                <strong>Done</strong>
-                <span>{resultMessage}</span>
-              </div>
-            ) : null}
-            {!error && !resultMessage && mainTab === "add" ? (
-              <div className="data-update-banner data-update-banner--info" role="status">
-                <strong>Ready</strong>
-                <span>Select level, fields, mode, and a CSV, then run the update.</span>
-              </div>
-            ) : null}
-          </div>
-          <div className="data-update-actions">
+          <div className="data-update-footer-actions">
             {mainTab === "add" ? (
               <button
                 type="button"
