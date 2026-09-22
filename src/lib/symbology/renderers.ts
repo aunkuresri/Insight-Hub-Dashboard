@@ -632,21 +632,6 @@ function buildPredominance(args: {
   const { rows, fields, aliases, requestedScheme } = args;
   const scheme = resolveScheme(requestedScheme, "Predominant Variable");
   const palette = scheme === "Qualitative - Muted" ? QUALITATIVE_MUTED : QUALITATIVE_BRIGHT;
-  const observed = new Set<string>();
-
-  for (const row of rows) {
-    const cleaned = fields.map((f) => {
-      const n = safeNumber(row[f]);
-      return n == null ? 0 : Math.max(0, n);
-    });
-    const total = cleaned.reduce((s, v) => s + v, 0);
-    if (total <= 0) continue;
-    let best = 0;
-    for (let i = 1; i < cleaned.length; i += 1) {
-      if (cleaned[i]! > cleaned[best]!) best = i;
-    }
-    observed.add(fields[best]!);
-  }
 
   const declarations = fields
     .map((field, index) => {
@@ -677,24 +662,14 @@ function buildPredominance(args: {
 
   const infos: Array<Record<string, unknown>> = [];
   const classes: LegendClass[] = [];
-  // Keep legend order = selection order; still only list fields that win somewhere.
+  // Always list every selected indicator in the legend (selection order), even if
+  // it is not predominant in any feature of the current sample.
   fields.forEach((field, index) => {
-    if (!observed.has(field)) return;
     const rgb = palette[index % palette.length]!;
     const label = aliases[field] ?? field;
     infos.push({ value: field, label, description: "", symbol: polygonSymbol(rgb) });
     classes.push({ label, color: rgb, value: field });
   });
-
-  // If nothing observed (all zeros), still expose all selected fields in the legend.
-  if (!classes.length) {
-    fields.forEach((field, index) => {
-      const rgb = palette[index % palette.length]!;
-      const label = aliases[field] ?? field;
-      infos.push({ value: field, label, description: "", symbol: polygonSymbol(rgb) });
-      classes.push({ label, color: rgb, value: field });
-    });
-  }
 
   return {
     renderer: {
