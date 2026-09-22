@@ -46,6 +46,8 @@ function LegendBlock({ group, legend }: { group: string; legend: AppliedLegend }
           palette={legend.bivariate.palette}
           breaksX={legend.bivariate.breaksX}
           breaksY={legend.bivariate.breaksY}
+          totalsX={legend.bivariate.totalsX}
+          totalsY={legend.bivariate.totalsY}
         />
       ) : legend.ternary ? (
         <TernaryLegend
