@@ -724,7 +724,7 @@
   margin-bottom: 0;
 }
 
-/* Ensure group label and field-count tag stay spaced (no concat) */
+/* Existing groups row: label + field count only (no group id) — deploy 2026-09-22 */
 .data-update-group-item-main {
   display: flex;
   align-items: center;
@@ -738,10 +738,10 @@
   white-space: nowrap;
 }
 
-/* Hard guarantee: label and count never stick together */
 .data-update-group-item-main > .data-update-group-item-label {
   margin-right: 8px;
 }
+
 .data-update-group-item-main > .method-tag {
   margin-left: 0;
 }
