@@ -405,7 +405,7 @@ export function DataUpdateWindow() {
                       const on = fieldIds.includes(field.id);
                       return (
                         <li key={field.id} role="option" aria-selected={on}>
-                          <label className={`check-list-item${on ? " is-selected" : ""}`}>
+                          <label className={`check-list-item${on ? " is-selected" : ""`}>
                             <span className="check-list-box" aria-hidden="true">
                               <input
                                 type="checkbox"
@@ -499,23 +499,10 @@ export function DataUpdateWindow() {
                 </label>
                 {fileInfo ? <p className="section-hint">{fileInfo}</p> : null}
               </section>
-
-              {error ? (
-                <div className="data-update-alert data-update-alert--error" role="alert">
-                  {error}
-                </div>
-              ) : null}
-              {resultMessage ? (
-                <div className="data-update-alert data-update-alert--ok" role="status">
-                  {resultMessage}
-                </div>
-              ) : null}
             </>
-          ) : null}
-
-          {mainTab === "modify" ? (
+          ) : (
             <>
-              <div className="data-update-subtabs" role="tablist" aria-label="Modify schema tools">
+              <div className="data-update-subtabs" role="tablist" aria-label="Modify Data sections">
                 <button
                   type="button"
                   className={modifyTab === "add_field" ? "seg-btn seg-active" : "seg-btn"}
@@ -523,7 +510,7 @@ export function DataUpdateWindow() {
                   aria-selected={modifyTab === "add_field"}
                   onClick={() => setModifyTab("add_field")}
                 >
-                  Add Field
+                  Add field
                 </button>
                 <button
                   type="button"
@@ -532,7 +519,7 @@ export function DataUpdateWindow() {
                   aria-selected={modifyTab === "modify_field"}
                   onClick={() => setModifyTab("modify_field")}
                 >
-                  Modify Field
+                  Modify field
                 </button>
                 <button
                   type="button"
@@ -541,56 +528,38 @@ export function DataUpdateWindow() {
                   aria-selected={modifyTab === "modify_group"}
                   onClick={() => setModifyTab("modify_group")}
                 >
-                  Create Group
+                  Modify group
                 </button>
               </div>
 
               {modifyTab === "add_field" ? (
                 <section className="data-update-card">
-                  <div className="section-head">
-                    <h2>Add Field</h2>
-                  </div>
                   <p className="section-hint" style={{ marginTop: 0 }}>
-                    Creates the attribute column on all Boundary and Chart layers in the web map, and registers it in the
-                    dashboard catalog. Requires edit privileges on the hosted feature service. Then load values via Add Data.
+                    Add a new attribute field to the web map layers and register it in an indicator
+                    group catalog.
                   </p>
                   <div className="data-update-form-grid">
-                    <label className="data-update-field">
-                      <span className="data-update-field-label">Field name</span>
+                    <label className="field">
+                      <span>Field name (attribute)</span>
                       <input
-                        className="data-update-input"
                         value={addFieldName}
                         onChange={(e) => setAddFieldName(e.target.value)}
-                        placeholder="e.g. crime_rate"
+                        placeholder="e.g. New_Metric"
                         autoComplete="off"
                       />
                     </label>
-                    <label className="data-update-field">
-                      <span className="data-update-field-label">Display label</span>
+                    <label className="field">
+                      <span>Display label</span>
                       <input
-                        className="data-update-input"
                         value={addFieldLabel}
                         onChange={(e) => setAddFieldLabel(e.target.value)}
-                        placeholder="e.g. Crime Rate"
+                        placeholder="e.g. New metric"
                         autoComplete="off"
                       />
                     </label>
-                    <label className="data-update-field">
-                      <span className="data-update-field-label">Field type</span>
+                    <label className="field">
+                      <span>Target group</span>
                       <select
-                        className="data-update-input"
-                        value={addFieldType}
-                        onChange={(e) => setAddFieldType(e.target.value)}
-                      >
-                        <option value="Double">Double (number)</option>
-                        <option value="Integer">Integer</option>
-                        <option value="String">String (text)</option>
-                      </select>
-                    </label>
-                    <label className="data-update-field">
-                      <span className="data-update-field-label">Indicator group</span>
-                      <select
-                        className="data-update-input"
                         value={addFieldGroupId}
                         onChange={(e) => setAddFieldGroupId(e.target.value)}
                       >
@@ -601,15 +570,23 @@ export function DataUpdateWindow() {
                         ))}
                       </select>
                     </label>
+                    <label className="field">
+                      <span>Field type</span>
+                      <select value={addFieldType} onChange={(e) => setAddFieldType(e.target.value)}>
+                        <option value="Double">Double</option>
+                        <option value="Integer">Integer</option>
+                        <option value="String">String</option>
+                      </select>
+                    </label>
                   </div>
                   <div className="data-update-form-actions">
                     <button
                       type="button"
                       className="data-update-run-btn"
-                      disabled={busy}
+                      disabled={busy || !mapReady}
                       onClick={() => void addFieldToGroup()}
                     >
-                      Add field to layers
+                      {busy ? "Adding…" : "Add field"}
                     </button>
                   </div>
                 </section>
@@ -617,48 +594,44 @@ export function DataUpdateWindow() {
 
               {modifyTab === "modify_field" ? (
                 <section className="data-update-card">
-                  <div className="section-head">
-                    <h2>Modify Field</h2>
-                  </div>
                   <p className="section-hint" style={{ marginTop: 0 }}>
-                    Move fields between groups or remove them from the catalog (does not delete
-                    service columns).
+                    Move a field between groups or remove it from the catalog (does not delete the
+                    service field).
                   </p>
                   {catalog.map((g) => (
                     <div key={g.id} className="data-update-group-block">
                       <div className="section-head">
                         <h2>{g.label}</h2>
-                        <span className="method-tag">{g.fields.length}</span>
+                        <span className="method-tag">{g.fields.length} fields</span>
                       </div>
                       {g.fields.length ? (
-                        <div className="data-update-field-list" role="list">
+                        <ul className="data-update-field-list" role="list">
                           {g.fields.map((f) => (
-                            <div key={f.id} className="data-update-field-row" role="listitem">
+                            <li key={f.id} className="data-update-field-row" role="listitem">
                               <span className="data-update-field-row-label">{f.label}</span>
                               <select
-                                className="data-update-input data-update-input--sm"
-                                aria-label={`Move ${f.label}`}
+                                aria-label={`Move ${f.label} to group`}
                                 value={g.id}
                                 onChange={(e) => moveField(f.id, g.id, e.target.value)}
                               >
-                                {catalog.map((cg) => (
-                                  <option key={cg.id} value={cg.id}>
-                                    {cg.label}
+                                {catalog.map((tg) => (
+                                  <option key={tg.id} value={tg.id}>
+                                    {tg.label}
                                   </option>
                                 ))}
                               </select>
                               <button
                                 type="button"
                                 className="data-update-icon-btn"
-                                title="Remove from catalog"
-                                aria-label={`Remove ${f.label}`}
+                                title={`Remove ${f.label} from catalog`}
+                                aria-label={`Remove ${f.label} from catalog`}
                                 onClick={() => removeFieldFromGroup(g.id, f.id)}
                               >
                                 <calcite-icon icon="trash" scale="s" />
                               </button>
-                            </div>
+                            </li>
                           ))}
-                        </div>
+                        </ul>
                       ) : (
                         <p className="empty-note">No fields in this group.</p>
                       )}
@@ -669,30 +642,26 @@ export function DataUpdateWindow() {
 
               {modifyTab === "modify_group" ? (
                 <section className="data-update-card">
-                  <div className="section-head">
-                    <h2>Create Group</h2>
-                  </div>
                   <p className="section-hint" style={{ marginTop: 0 }}>
-                    Add or remove indicator groups used by Smart Symbology and analytics.
+                    Create or remove indicator groups used by Smart Symbology, Analytics, and Add
+                    Data.
                   </p>
                   <div className="data-update-form-grid">
-                    <label className="data-update-field">
-                      <span className="data-update-field-label">Group id</span>
+                    <label className="field">
+                      <span>New group id</span>
                       <input
-                        className="data-update-input"
                         value={newGroupId}
                         onChange={(e) => setNewGroupId(e.target.value)}
-                        placeholder="e.g. health"
+                        placeholder="e.g. Environment"
                         autoComplete="off"
                       />
                     </label>
-                    <label className="data-update-field">
-                      <span className="data-update-field-label">Display label</span>
+                    <label className="field">
+                      <span>Display label</span>
                       <input
-                        className="data-update-input"
                         value={newGroupLabel}
                         onChange={(e) => setNewGroupLabel(e.target.value)}
-                        placeholder="e.g. Health"
+                        placeholder="e.g. Environment"
                         autoComplete="off"
                       />
                     </label>
@@ -705,19 +674,21 @@ export function DataUpdateWindow() {
 
                   <div className="section-head" style={{ marginTop: "1rem" }}>
                     <h2>Existing groups</h2>
+                    <span className="method-tag">{catalog.length}</span>
                   </div>
                   <ul className="data-update-group-list" role="list">
                     {catalog.map((g) => (
                       <li key={g.id} className="data-update-group-item" role="listitem">
-                        <span>
-                          <strong>{g.label}</strong>
-                          <span className="method-tag">{g.id}</span>
-                          <span className="method-tag">{g.fields.length} fields</span>
-                        </span>
+                        <div className="data-update-group-item-main">
+                          <span className="data-update-group-item-label">{g.label}</span>
+                          <span className="method-tag">
+                            {g.fields.length} field{g.fields.length === 1 ? "" : "s"}
+                          </span>
+                        </div>
                         <button
                           type="button"
                           className="data-update-icon-btn"
-                          title="Remove group"
+                          title={`Remove group ${g.label}`}
                           aria-label={`Remove group ${g.label}`}
                           onClick={() => removeGroup(g.id)}
                         >
@@ -728,23 +699,32 @@ export function DataUpdateWindow() {
                   </ul>
                 </section>
               ) : null}
-
-              {error ? (
-                <div className="data-update-alert data-update-alert--error" role="alert">
-                  {error}
-                </div>
-              ) : null}
-              {resultMessage ? (
-                <div className="data-update-alert data-update-alert--ok" role="status">
-                  {resultMessage}
-                </div>
-              ) : null}
             </>
-          ) : null}
+          )}
         </div>
 
         <footer className="data-update-footer">
-          <div className="data-update-footer-actions">
+          <div className="data-update-result" aria-live="polite">
+            {busy ? (
+              <div className="data-update-banner data-update-banner--info" role="status">
+                <strong>Running…</strong>
+                <span>Matching features and writing attributes. Please wait.</span>
+              </div>
+            ) : null}
+            {!busy && resultMessage ? (
+              <div className="data-update-banner data-update-banner--success" role="status">
+                <strong>Completed</strong>
+                <span>{resultMessage}</span>
+              </div>
+            ) : null}
+            {!busy && error ? (
+              <div className="data-update-banner data-update-banner--danger" role="alert">
+                <strong>Error</strong>
+                <span>{error}</span>
+              </div>
+            ) : null}
+          </div>
+          <div className="data-update-actions">
             {mainTab === "add" ? (
               <button
                 type="button"
@@ -752,11 +732,9 @@ export function DataUpdateWindow() {
                 disabled={!canRunAdd}
                 onClick={() => void runAddData()}
               >
-                {busy ? "Updating…" : "Run update"}
+                {busy ? "Running…" : "Run Add Data"}
               </button>
-            ) : (
-              <span style={{ flex: 1 }} />
-            )}
+            ) : null}
             <button
               type="button"
               className="data-update-cancel-btn"
