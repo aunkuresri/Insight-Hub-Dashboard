@@ -45,7 +45,16 @@ export type AppliedLegend = {
     counts?: { high: number; mid: number; low: number };
   };
   ternary?: { a: string; b: string; c: string; scheme: string };
-  bivariate?: { xLabel: string; yLabel: string; palette: Record<string, RGB>; breaksX?: number[]; breaksY?: number[] };
+  bivariate?: {
+    xLabel: string;
+    yLabel: string;
+    palette: Record<string, RGB>;
+    breaksX?: number[];
+    breaksY?: number[];
+    /** Sum of field values in Low / Medium / High for each axis. */
+    totalsX?: { low: number; mid: number; high: number };
+    totalsY?: { low: number; mid: number; high: number };
+  };
 };
 
 export type BuildResult = {
@@ -409,7 +418,7 @@ function buildClassEdges(values: number[], desired: number): number[] {
  */
 function tertileBreaks(values: number[]): [number, number] {
   if (!values.length) return [0, 0];
-  const unique = [...new Set(values)].sort((a, b) => a - b);
+  const unique = [...new Set(values)].sort((a, b) => a - b;
   if (unique.length === 1) return [unique[0]!, unique[0]!];
   if (unique.length === 2) return [unique[0]!, unique[0]!];
 
@@ -422,6 +431,19 @@ function tertileBreaks(values: number[]): [number, number] {
   let i2 = Math.max(i1 + 1, Math.min(unique.length - 1, Math.floor((2 * unique.length) / 3)));
   if (i2 <= i1) i2 = Math.min(unique.length - 1, i1 + 1);
   return [unique[i1]!, unique[i2]!];
+}
+
+/** Sum of values in Low (≤ t1) / Medium (t1 < v ≤ t2) / High (> t2). */
+function tertileSums(values: number[], t1: number, t2: number): { low: number; mid: number; high: number } {
+  let low = 0;
+  let mid = 0;
+  let high = 0;
+  for (const v of values) {
+    if (v <= t1) low += v;
+    else if (v <= t2) mid += v;
+    else high += v;
+  }
+  return { low, mid, high };
 }
 
 function formatBreak(n: number): string {
@@ -477,6 +499,10 @@ function buildBivariate(args: {
   const minY = valuesY[0]!;
   const maxY = valuesY[valuesY.length - 1]!;
 
+  // Sum of indicator values in each tertile class (matches ≤ / range / > labels).
+  const totalsX = tertileSums(valuesX, x1, x2);
+  const totalsY = tertileSums(valuesY, y1, y2);
+
   return {
     renderer: {
       type: "uniqueValue",
@@ -506,6 +532,8 @@ function buildBivariate(args: {
         // BivariateLegend expects [min, q33, q66, max] when present
         breaksX: [minX, x1, x2, maxX],
         breaksY: [minY, y1, y2, maxY],
+        totalsX,
+        totalsY,
       },
     },
   };
