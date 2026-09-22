@@ -469,39 +469,48 @@
   cursor: not-allowed;
 }
 
-/* ---- Manage Data form layout ---- */
+/* ---- Manage Data form layout (production) ---- */
 
-/* Primary: Add Data | Modify Data */
-.data-update-maintabs {
+/* Segmented control track — full-width, equal segments (Calcite-style) */
+.data-update-maintabs,
+.data-update-subtabs {
   display: grid;
-  grid-template-columns: 1fr 1fr;
   width: 100%;
-  margin: 0 0 12px;
+  margin: 0 0 4px;
   flex-shrink: 0;
   gap: 0;
   padding: 3px;
-  border: 1px solid rgb(0 0 0 / 0.14);
+  border: 1px solid rgb(0 0 0 / 0.12);
   border-radius: 6px;
-  background: #e8e8e8;
+  background: #f0f0f0;
   box-sizing: border-box;
 }
 
-.data-update-maintabs .seg-btn {
+.data-update-maintabs {
+  grid-template-columns: 1fr 1fr;
+}
+
+.data-update-subtabs {
+  grid-template-columns: 1fr 1fr 1fr;
+}
+
+.data-update-maintabs .seg-btn,
+.data-update-subtabs .seg-btn {
   display: inline-flex;
   align-items: center;
   justify-content: center;
   gap: 6px;
   min-width: 0;
   width: 100%;
-  height: 36px;
+  height: 34px;
   margin: 0;
-  padding: 0 12px;
+  padding: 0 10px;
   border: 0;
   border-radius: 4px;
   background: transparent;
   color: #4a4a4a;
   font: inherit;
-  font-size: 13px;
+  font-size: 12px;
   font-weight: 600;
   letter-spacing: 0.01em;
   cursor: pointer;
@@ -509,111 +518,32 @@
   transition: background 0.12s ease, color 0.12s ease, box-shadow 0.12s ease;
 }
 
-.data-update-maintabs .seg-btn:hover:not(.seg-active) {
+.data-update-maintabs .seg-btn:hover:not(.seg-active),
+.data-update-subtabs .seg-btn:hover:not(.seg-active) {
   background: rgb(255 255 255 / 0.55);
   color: #151515;
 }
 
-.data-update-maintabs .seg-btn.seg-active {
+.data-update-maintabs .seg-btn.seg-active,
+.data-update-subtabs .seg-btn.seg-active {
   background: #ffffff;
   color: #0079c1;
-  box-shadow: 0 1px 3px rgb(0 0 0 / 0.14);
+  box-shadow: 0 1px 3px rgb(0 0 0 / 0.12);
 }
 
-.data-update-maintabs .seg-btn.seg-active calcite-icon {
+.data-update-maintabs .seg-btn.seg-active calcite-icon,
+.data-update-subtabs .seg-btn.seg-active calcite-icon {
   color: #0079c1;
 }
 
-.data-update-maintabs .seg-btn calcite-icon {
+.data-update-maintabs .seg-btn calcite-icon,
+.data-update-subtabs .seg-btn calcite-icon {
   flex-shrink: 0;
   color: #6a6a6a;
   --calcite-icon-size: 14px;
 }
 
-.data-update-maintabs .seg-btn:focus-visible {
-  outline: 2px solid color-mix(in oklab, #0079c1 45%, transparent);
-  outline-offset: 1px;
-}
-
-/* Secondary under Modify Data — compact chips (hierarchy) */
-.data-update-subtabs-wrap {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-  margin: 0 0 12px;
-  padding-left: 10px;
-  border-left: 2px solid color-mix(in oklab, #0079c1 35%, transparent);
-}
-
-.data-update-subtabs-label {
-  margin: 0;
-  font-size: 10px;
-  font-weight: 600;
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
-  color: #6a6a6a;
-}
-
-.data-update-subtabs {
-  display: flex;
-  flex-wrap: wrap;
-  width: 100%;
-  margin: 0 0 4px;
-  flex-shrink: 0;
-  gap: 6px;
-  padding: 0;
-  border: 0;
-  background: transparent;
-  box-sizing: border-box;
-}
-
-.data-update-subtabs .seg-btn {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  gap: 5px;
-  min-width: 0;
-  width: auto;
-  flex: 0 1 auto;
-  height: 28px;
-  margin: 0;
-  padding: 0 10px;
-  border: 1px solid rgb(0 0 0 / 0.12);
-  border-radius: 4px;
-  background: #f7f7f7;
-  color: #555;
-  font: inherit;
-  font-size: 11px;
-  font-weight: 600;
-  letter-spacing: 0.01em;
-  cursor: pointer;
-  white-space: nowrap;
-  transition: background 0.12s ease, color 0.12s ease, border-color 0.12s ease;
-}
-
-.data-update-subtabs .seg-btn:hover:not(.seg-active) {
-  background: #ffffff;
-  color: #151515;
-  border-color: rgb(0 0 0 / 0.2);
-}
-
-.data-update-subtabs .seg-btn.seg-active {
-  background: #ffffff;
-  color: #0079c1;
-  border-color: color-mix(in oklab, #0079c1 45%, transparent);
-  box-shadow: none;
-}
-
-.data-update-subtabs .seg-btn.seg-active calcite-icon {
-  color: #0079c1;
-}
-
-.data-update-subtabs .seg-btn calcite-icon {
-  flex-shrink: 0;
-  color: #6a6a6a;
-  --calcite-icon-size: 12px;
-}
-
+.data-update-maintabs .seg-btn:focus-visible,
 .data-update-subtabs .seg-btn:focus-visible {
   outline: 2px solid color-mix(in oklab, #0079c1 45%, transparent);
   outline-offset: 1px;
@@ -648,14 +578,14 @@
   }
 
   .data-update-subtabs {
-    flex-direction: column;
-    align-items: stretch;
+    grid-template-columns: 1fr;
+    gap: 2px;
   }
 
   .data-update-subtabs .seg-btn {
-    width: 100%;
+    height: 36px;
     justify-content: flex-start;
-    height: 32px;
+    padding: 0 12px;
   }
 }
 
