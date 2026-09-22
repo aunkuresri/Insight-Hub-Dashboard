@@ -1,4 +1,4 @@
-import { blendTernary, rgbCss, TERNARY_SCHEMES } from "@/config/symbology-schemes";
+import { blendTernary, rgbCss } from "@/config/symbology-schemes";
 
 export function TernaryLegend({
   a,
@@ -11,8 +11,9 @@ export function TernaryLegend({
   c: string;
   scheme: string;
 }) {
-  const size = 120;
-  const pad = 10;
+  // Compact panel-friendly size (was 168 — too large for side panel)
+  const size = 112;
+  const pad = 8;
   const top = { x: size / 2, y: pad };
   const left = { x: pad, y: size - pad };
   const right = { x: size - pad, y: size - pad };
@@ -37,20 +38,12 @@ export function TernaryLegend({
     }
   }
 
-  const colors = TERNARY_SCHEMES[scheme] ?? TERNARY_SCHEMES["Red - Green - Blue"];
-  const corners = [
-    { label: a, pct: "100%", rgb: colors.corner_a, tip: `100% ${a}` },
-    { label: b, pct: "100%", rgb: colors.corner_b, tip: `100% ${b}` },
-    { label: c, pct: "100%", rgb: colors.corner_c, tip: `100% ${c}` },
-  ];
-
   return (
     <div className="ternary-legend">
-      <p className="legend-kicker">Ternary composition</p>
+      <p className="legend-kicker">Ternary / triangle</p>
       <div className="ternary-wrap">
-        <span className="ternary-label ternary-label-top" title={`${c} — 100%`}>
+        <span className="ternary-label ternary-label-top" title={c}>
           {shortLabel(c)}
-          <span className="ternary-pct">100%</span>
         </span>
         <svg
           viewBox={`0 0 ${size} ${size}`}
@@ -70,40 +63,19 @@ export function TernaryLegend({
           <polygon
             points={`${top.x},${top.y} ${right.x},${right.y} ${left.x},${left.y}`}
             fill="none"
-            stroke="var(--color-border-strong, #999)"
+            stroke="var(--color-border-strong)"
             strokeWidth="1"
           />
         </svg>
         <div className="ternary-base">
-          <span className="ternary-label ternary-label-left" title={`${a} — 100%`}>
+          <span className="ternary-label ternary-label-left" title={a}>
             {shortLabel(a)}
-            <span className="ternary-pct">100%</span>
           </span>
-          <span className="ternary-label ternary-label-right" title={`${b} — 100%`}>
+          <span className="ternary-label ternary-label-right" title={b}>
             {shortLabel(b)}
-            <span className="ternary-pct">100%</span>
           </span>
         </div>
       </div>
-
-      <ul className="ternary-swatches" aria-label="Corner values">
-        {corners.map((item) => (
-          <li key={item.label} title={item.tip}>
-            <span
-              className="swatch"
-              style={{ background: rgbCss(item.rgb) }}
-              aria-hidden
-            />
-            <span>
-              <strong>{item.label}</strong>
-              <span className="ternary-swatch-pct"> · {item.pct}</span>
-            </span>
-          </li>
-        ))}
-      </ul>
-      <p className="ternary-hint">
-        Colors blend by share of each indicator (sums to 100%).
-      </p>
     </div>
   );
 }
@@ -129,8 +101,9 @@ function clampPoint(p: { x: number; y: number }, size: number) {
   };
 }
 
+/** Short display label for tight panel space. */
 function shortLabel(value: string) {
   const v = value.trim();
-  if (v.length <= 14) return v;
-  return `${v.slice(0, 13)}…`;
+  if (v.length <= 12) return v;
+  return `${v.slice(0, 11)}…`;
 }
