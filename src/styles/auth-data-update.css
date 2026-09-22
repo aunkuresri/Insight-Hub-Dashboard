@@ -589,6 +589,65 @@
   }
 }
 
+.data-update-field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+
+.data-update-field-label {
+  font-size: 11px;
+  font-weight: 600;
+  color: #323232;
+  letter-spacing: 0.01em;
+}
+
+.data-update-input {
+  height: 32px;
+  width: 100%;
+  box-sizing: border-box;
+  border: 1px solid rgb(0 0 0 / 0.18);
+  border-radius: 4px;
+  padding: 0 10px;
+  font: inherit;
+  font-size: 13px;
+  font-weight: 400;
+  color: #151515;
+  background: #ffffff;
+}
+
+.data-update-input:focus {
+  outline: 2px solid color-mix(in oklab, #0079c1 35%, transparent);
+  outline-offset: 1px;
+  border-color: #0079c1;
+}
+
+.data-update-input--sm {
+  height: 28px;
+  font-size: 12px;
+  max-width: 140px;
+  padding: 0 8px;
+}
+
+.data-update-form-actions {
+  display: flex;
+  justify-content: flex-start;
+  margin-top: 2px;
+}
+
+.data-update-form-actions .data-update-run-btn {
+  flex: 0 0 auto;
+  min-width: 160px;
+}
+
+.data-update-field-list,
+.data-update-group-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
 .data-update-field-row {
   display: flex;
   align-items: center;
