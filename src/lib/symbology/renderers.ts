@@ -26,7 +26,7 @@ export type LegendClass = {
   label: string;
   color: RGB;
   value?: string;
-  /** Feature count in this class (when known). */
+  /** Sum of indicator field values in this class (when known). */
   count?: number;
 };
 
@@ -265,7 +265,7 @@ function buildChoropleth(args: {
         title: label,
         fields: [{ id: field, name: field, label }],
         colors: { fill: rgb },
-        classes: [{ label: withCount(formatBreak(values[0] ?? 0), values.length), color: rgb, count: values.length }],
+        classes: [{ label: withCount(formatBreak(values[0] ?? 0), sumValues(values)), color: rgb, count: sumValues(values) }],
       },
     };
   }
@@ -292,7 +292,7 @@ function buildChoropleth(args: {
           : i === actualClasses - 1
             ? `> ${formatBreak(minV)}`
             : `${formatBreak(minV)} – ${formatBreak(maxV)}`;
-    const count = countClassMembers(values, i, actualClasses, edges);
+    const count = sumClassMembers(values, i, actualClasses, edges);
     const labelWithCount = withCount(classLabel, count);
     infos.push({
       classMinValue: minV,
@@ -325,28 +325,39 @@ function buildChoropleth(args: {
   };
 }
 
-/** Count values in a class break, matching legend labels (≤ / range / >). */
-function countClassMembers(
+/** Sum of field values in a class break, matching legend labels (≤ / range / >). */
+function sumClassMembers(
   values: number[],
   classIndex: number,
   classCount: number,
   edges: number[],
 ): number {
   if (classCount <= 0 || values.length === 0) return 0;
-  if (classCount === 1) return values.length;
-  const minV = edges[classIndex]!;
-  const maxV = edges[classIndex + 1]!;
-  if (classIndex === 0) {
-    return values.filter((v) => v <= maxV).length;
+  let members: number[];
+  if (classCount === 1) {
+    members = values;
+  } else {
+    const minV = edges[classIndex]!;
+    const maxV = edges[classIndex + 1]!;
+    if (classIndex === 0) {
+      members = values.filter((v) => v <= maxV);
+    } else if (classIndex === classCount - 1) {
+      members = values.filter((v) => v > minV);
+    } else {
+      members = values.filter((v) => v > minV && v <= maxV);
+    }
   }
-  if (classIndex === classCount - 1) {
-    return values.filter((v) => v > minV).length;
-  }
-  return values.filter((v) => v > minV && v <= maxV).length;
+  return sumValues(members);
 }
 
-function withCount(label: string, count: number): string {
-  return `${label} (${count})`;
+function sumValues(values: number[]): number {
+  let total = 0;
+  for (const v of values) total += v;
+  return total;
+}
+
+function withCount(label: string, total: number): string {
+  return `${label} (${formatBreak(total)})`;
 }
 
 function buildClassEdges(values: number[], desired: number): number[] {
@@ -430,35 +441,41 @@ function buildBivariate(args: {
   const { rows, fieldX, fieldY, aliases, requestedScheme } = args;
   const valuesX = numericValues(rows, fieldX);
   const valuesY = numericValues(rows, fieldY);
+  if (!valuesX.length || !valuesY.length) {
+    throw new Error("Both bivariate fields require numeric values.");
+  }
   const [x1, x2] = tertileBreaks(valuesX);
   const [y1, y2] = tertileBreaks(valuesY);
   const schemeKey = resolveScheme(requestedScheme, "Bivariate Colors (3 x 3)");
   const palette = bivariatePalette(schemeKey);
   const labelX = aliases[fieldX] ?? fieldX;
   const labelY = aliases[fieldY] ?? fieldY;
+  const levels: Record<number, string> = { 1: "Low", 2: "Medium", 3: "High" };
 
-  const codes = ["LL", "LM", "LH", "ML", "MM", "MH", "HL", "HM", "HH"] as const;
+  // Palette / legend keys are "x_y" (1-based), matching bivariatePalette() and BivariateLegend.
   const infos: Array<Record<string, unknown>> = [];
   const classes: LegendClass[] = [];
-
-  for (const code of codes) {
-    const rgb = palette[code]!;
-    const xi = code[0] === "L" ? "Low" : code[0] === "M" ? "Med" : "High";
-    const yi = code[1] === "L" ? "Low" : code[1] === "M" ? "Med" : "High";
-    const label = `${xi} ${labelX} / ${yi} ${labelY}`;
-    infos.push({ value: code, label, symbol: polygonSymbol(rgb) });
-    classes.push({ label, color: rgb, value: code });
+  for (let yClass = 1; yClass <= 3; yClass += 1) {
+    for (let xClass = 1; xClass <= 3; xClass += 1) {
+      const code = `${xClass}_${yClass}`;
+      const rgb = palette[code] ?? ([200, 200, 200] as RGB);
+      const label = `${labelX} ${levels[xClass]} / ${labelY} ${levels[yClass]}`;
+      infos.push({ value: code, label, description: "", symbol: polygonSymbol(rgb) });
+      classes.push({ label, color: rgb, value: code });
+    }
   }
 
-  const fx = arcadeNumber(fieldX);
-  const fy = arcadeNumber(fieldY);
   const expression =
-    `var x=${fx};var y=${fy};` +
-    `if(IsEmpty(x)||IsEmpty(y)){return '__NODATA__';}` +
-    `var xc=x<=${x1}?0:(x<=${x2}?1:2);` +
-    `var yc=y<=${y1}?0:(y<=${y2}?1:2);` +
-    `var codes=['LL','LM','LH','ML','MM','MH','HL','HM','HH'];` +
-    `return codes[xc*3+yc];`;
+    `var x=${arcadeField(fieldX)}; var y=${arcadeField(fieldY)}; ` +
+    `if(IsEmpty(x)||IsEmpty(y)){return '__NODATA__';} ` +
+    `var xc=When(x<=${arcadeNumber(x1)},1,x<=${arcadeNumber(x2)},2,3); ` +
+    `var yc=When(y<=${arcadeNumber(y1)},1,y<=${arcadeNumber(y2)},2,3); ` +
+    `return Text(xc)+'_'+Text(yc);`;
+
+  const minX = valuesX[0]!;
+  const maxX = valuesX[valuesX.length - 1]!;
+  const minY = valuesY[0]!;
+  const maxY = valuesY[valuesY.length - 1]!;
 
   return {
     renderer: {
@@ -483,9 +500,12 @@ function buildBivariate(args: {
       bivariate: {
         xLabel: labelX,
         yLabel: labelY,
-        palette: Object.fromEntries(codes.map((c) => [c, palette[c]!])),
-        breaksX: [x1, x2],
-        breaksY: [y1, y2],
+        palette: Object.fromEntries(
+          [1, 2, 3].flatMap((x) => [1, 2, 3].map((y) => [`${x}_${y}`, palette[`${x}_${y}`]!])),
+        ),
+        // BivariateLegend expects [min, q33, q66, max] when present
+        breaksX: [minX, x1, x2, maxX],
+        breaksY: [minY, y1, y2, maxY],
       },
     },
   };
@@ -595,12 +615,12 @@ function buildPredominance(args: {
 
   const comparisons = fields
     .map((field, index) => {
-      const expr = arcadeNumber(field);
+      const expr = arcadeField(field);
       const rest = fields
         .filter((_, j) => j !== index)
-        .map((other) => `(${expr})>=(${arcadeNumber(other)})`)
+        .map((other) => `(${expr})>=(${arcadeField(other)})`)
         .join("&&");
-      return `if(${rest}){return '${field}';}`;
+      return `if(${rest}){return '${field}';`;
     })
     .join("");
   const expression = `${comparisons}return '__NODATA__';`;
