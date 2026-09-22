@@ -91,19 +91,32 @@ function featureLayerAdminUrl(layer: EsriLayer): string {
   return base;
 }
 
+/** Use only cached credentials — never prompt (getCredential freezes UI under the modal). */
 async function resolveToken(serviceUrl: string): Promise<string | undefined> {
   try {
     const IdentityManager = (await import("@arcgis/core/identity/IdentityManager.js")).default as {
       findCredential?: (url: string) => { token?: string } | null | undefined;
-      getCredential?: (url: string) => Promise<{ token?: string }>;
     };
-    const cred =
-      IdentityManager.findCredential?.(serviceUrl) ||
-      (await IdentityManager.getCredential?.(serviceUrl).catch(() => null));
-    return cred?.token || undefined;
+    return IdentityManager.findCredential?.(serviceUrl)?.token || undefined;
   } catch {
     return undefined;
   }
+}
+
+function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const t = setTimeout(() => reject(new Error(`${label} timed out after ${ms / 1000}s`)), ms);
+    promise.then(
+      (v) => {
+        clearTimeout(t);
+        resolve(v);
+      },
+      (e) => {
+        clearTimeout(t);
+        reject(e);
+      },
+    );
+  });
 }
 
 async function postAddToDefinition(layer: EsriLayer, fieldDef: Record<string, unknown>): Promise<void> {
@@ -128,16 +141,20 @@ async function postAddToDefinition(layer: EsriLayer, fieldDef: Record<string, un
   params.set("addToDefinition", JSON.stringify({ fields: [fieldDef] }));
   if (token) params.set("token", token);
 
-  const response = await esriRequest(endpoint, {
-    method: "post",
-    body: params.toString(),
-    headers: {
-      "Content-Type": "application/x-www-form-urlencoded",
-    },
-    responseType: "json",
-    // Allow IdentityManager to attach credentials when available
-    authMode: "auto",
-  });
+  // no-prompt: never open ArcGIS sign-in under the Manage Data modal (black backdrop + hang)
+  const response = await withTimeout(
+    esriRequest(endpoint, {
+      method: "post",
+      body: params.toString(),
+      headers: {
+        "Content-Type": "application/x-www-form-urlencoded",
+      },
+      responseType: "json",
+      authMode: "no-prompt",
+    }),
+    25_000,
+    `addToDefinition (${layer.title || "layer"})`,
+  );
 
   const data = response?.data;
   if (data?.error) {
@@ -242,13 +259,8 @@ export async function addFieldToWebMapLayers(input: AddLayerFieldInput): Promise
       await postAddToDefinition(layer, fieldDef);
       created += 1;
       try {
-        // Refresh fields so layerHasField / symbology see the new column
-        const fl = layer as {
-          refresh?: () => void;
-          load?: () => Promise<unknown>;
-        };
-        fl.refresh?.();
-        await fl.load?.();
+        // Refresh only — do not await load() after schema change (can hang)
+        (layer as { refresh?: () => void }).refresh?.();
       } catch {
         /* optional */
       }
