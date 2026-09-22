@@ -111,17 +111,32 @@ function toAdminFeatureLayerUrl(layerUrl: string): string {
   return base;
 }
 
-/** Use only cached credentials — never prompt (getCredential freezes UI under the modal). */
+/**
+ * Resolve a token without opening a sign-in UI (that freezes the Manage Data modal).
+ * Checks the service URL, admin URL, and portal URL credentials.
+ */
 async function resolveToken(serviceUrl: string): Promise<string | undefined> {
   try {
     const IdentityManager = (await import("@arcgis/core/identity/IdentityManager.js")).default as {
       findCredential?: (url: string) => { token?: string } | null | undefined;
+      checkSignInStatus?: (url: string) => Promise<{ token?: string }>;
     };
-    return IdentityManager.findCredential?.(serviceUrl)?.token || undefined;
+    const cached = IdentityManager.findCredential?.(serviceUrl);
+    if (cached?.token) return cached.token;
+    try {
+      const status = await IdentityManager.checkSignInStatus?.(serviceUrl);
+      if (status?.token) return status.token;
+    } catch {
+      /* not signed in */
+    }
+    return undefined;
   } catch {
     return undefined;
   }
 }
+
+const NO_TOKEN_HINT =
+  "No ArcGIS token with schema privileges. On the portal, register an OAuth app, set oauthAppId in src/config/app-config.ts, reload, sign in as a user who owns/edits the hosted layers, then try again. Or add the field in Portal/Pro and only register it in the catalog here.";
 
 function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise<T> {
   return new Promise<T>((resolve, reject) => {
@@ -154,16 +169,27 @@ async function postAddToDefinition(layer: EsriLayer, fieldDef: Record<string, un
     };
   }>;
 
-  // Token is usually registered against the public service URL
-  const token =
+  // Token is usually registered against the public service URL or portal
+  let token =
     (await resolveToken(publicUrl)) ||
     (await resolveToken(base));
+  try {
+    const { getAppConfig } = await import("@/config/app-config");
+    const portalUrl = getAppConfig().portalUrl;
+    if (!token && portalUrl) token = await resolveToken(portalUrl);
+  } catch {
+    /* optional */
+  }
+
+  if (!token) {
+    throw new Error(NO_TOKEN_HINT);
+  }
 
   // ArcGIS REST expects application/x-www-form-urlencoded body, not a JS object
   const params = new URLSearchParams();
   params.set("f", "json");
   params.set("addToDefinition", JSON.stringify({ fields: [fieldDef] }));
-  if (token) params.set("token", token);
+  params.set("token", token);
 
   // no-prompt: never open ArcGIS sign-in under the Manage Data modal (black backdrop + hang)
   const response = await withTimeout(
@@ -307,7 +333,7 @@ export async function addFieldToWebMapLayers(input: AddLayerFieldInput): Promise
   } else if (!created && skipped && !failed.length) {
     message = `Field "${name}" already exists on the web map layers.`;
   } else if (failed.length) {
-    message = `Could not create field on the feature service. ${failed[0]} Schema changes need the hosted service admin endpoint and a user with update privileges on the layer.`;
+    message = `Could not create field on the feature service. ${failed[0]}`;
   } else {
     message = `No layers were updated for field "${name}".`;
   }
