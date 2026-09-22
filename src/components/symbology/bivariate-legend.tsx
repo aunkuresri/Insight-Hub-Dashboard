@@ -7,17 +7,27 @@ function formatBreak(n: number): string {
   return n.toLocaleString("en-US", { maximumFractionDigits: 1 });
 }
 
+type AxisTotals = { low: number; mid: number; high: number };
+
 /** breaks* = [min, q33, q66, max] when provided from the renderer. */
-function rangeLabels(breaks?: number[]): { low: string; mid: string; high: string } {
+function rangeLabels(
+  breaks?: number[],
+  totals?: AxisTotals,
+): { low: string; mid: string; high: string } {
   if (!breaks || breaks.length < 4) {
     return { low: "Low", mid: "Medium", high: "High" };
   }
   const b1 = breaks[1]!;
   const b2 = breaks[2]!;
+  const withTotal = (label: string, total: number | undefined) =>
+    total != null ? `${label} (${formatBreak(total)})` : label;
   return {
-    low: `≤ ${formatBreak(b1)}`,
-    mid: b1 === b2 ? `= ${formatBreak(b1)}` : `${formatBreak(b1)} – ${formatBreak(b2)}`,
-    high: `> ${formatBreak(b2)}`,
+    low: withTotal(`≤ ${formatBreak(b1)}`, totals?.low),
+    mid: withTotal(
+      b1 === b2 ? `= ${formatBreak(b1)}` : `${formatBreak(b1)} – ${formatBreak(b2)}`,
+      totals?.mid,
+    ),
+    high: withTotal(`> ${formatBreak(b2)}`, totals?.high),
   };
 }
 
@@ -27,15 +37,19 @@ export function BivariateLegend({
   palette,
   breaksX,
   breaksY,
+  totalsX,
+  totalsY,
 }: {
   xLabel: string;
   yLabel: string;
   palette: Record<string, RGB>;
   breaksX?: number[];
   breaksY?: number[];
+  totalsX?: AxisTotals;
+  totalsY?: AxisTotals;
 }) {
-  const xRanges = rangeLabels(breaksX);
-  const yRanges = rangeLabels(breaksY);
+  const xRanges = rangeLabels(breaksX, totalsX);
+  const yRanges = rangeLabels(breaksY, totalsY);
   const xNames = [xRanges.low, xRanges.mid, xRanges.high];
   const yNames = [yRanges.low, yRanges.mid, yRanges.high];
 
