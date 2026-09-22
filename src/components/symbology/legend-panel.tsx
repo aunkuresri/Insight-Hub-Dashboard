@@ -73,18 +73,26 @@ function LegendBlock({ group, legend }: { group: string; legend: AppliedLegend }
 function SizeLegend({
   size,
 }: {
-  size: { title: string; min: number; max: number };
+  size: {
+    title: string;
+    min: number;
+    max: number;
+    counts?: { high: number; mid: number; low: number };
+  };
 }) {
-  const { min, max, title } = size;
+  const { min, max, title, counts } = size;
   const lo = Number.isFinite(min) ? min : 0;
   const hi = Number.isFinite(max) && max > lo ? max : lo + 1;
   const mid = (lo + hi) / 2;
   const lowBreak = lo + (hi - lo) * 0.12;
 
+  const withCount = (label: string, count: number | undefined) =>
+    count != null ? `${label} (${count})` : label;
+
   const classes = [
-    { px: 28, label: formatNumber(Math.round(hi)) },
-    { px: 18, label: formatNumber(Math.round(mid)) },
-    { px: 10, label: `< ${formatNumber(Math.round(lowBreak || 1))}` },
+    { px: 28, label: withCount(formatNumber(Math.round(hi)), counts?.high) },
+    { px: 18, label: withCount(formatNumber(Math.round(mid)), counts?.mid) },
+    { px: 10, label: withCount(`< ${formatNumber(Math.round(lowBreak || 1))}`, counts?.low) },
   ];
 
   return (
