@@ -418,7 +418,7 @@ function buildClassEdges(values: number[], desired: number): number[] {
  */
 function tertileBreaks(values: number[]): [number, number] {
   if (!values.length) return [0, 0];
-  const unique = [...new Set(values)].sort((a, b) => a - b;
+  const unique = [...new Set(values)].sort((a, b) => a - b);
   if (unique.length === 1) return [unique[0]!, unique[0]!];
   if (unique.length === 2) return [unique[0]!, unique[0]!];
 
