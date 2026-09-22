@@ -405,7 +405,7 @@ export function DataUpdateWindow() {
                       const on = fieldIds.includes(field.id);
                       return (
                         <li key={field.id} role="option" aria-selected={on}>
-                          <label className={`check-list-item${on ? " is-selected" : ""}`}>
+                          <label className={`check-list-item${on ? " is-selected" : ""`}>
                             <span className="check-list-box" aria-hidden="true">
                               <input
                                 type="checkbox"
@@ -700,8 +700,11 @@ export function DataUpdateWindow() {
                       <li key={g.id} className="data-update-group-item" role="listitem">
                         <div className="data-update-group-item-main">
                           <span className="data-update-group-item-label">{g.label}</span>
-                          <span className="method-tag data-update-group-count">
-                            {g.fields.length} field{g.fields.length === 1 ? "" : "s"}
+                          <span
+                            className="method-tag data-update-group-count"
+                            aria-label={`${g.fields.length} fields`}
+                          >
+                            {`${g.fields.length} field${g.fields.length === 1 ? "" : "s"}`}
                           </span>
                         </div>
                         <button
