@@ -8,6 +8,7 @@ import {
 } from "@/config/indicators";
 import { ADMIN_LEVELS, type AdminLevelId } from "@/config/layers";
 import { applyCsvUpdates, type UpdateMode } from "@/lib/data-update/apply-csv-updates";
+import { addFieldToWebMapLayers } from "@/lib/data-update/add-layer-field";
 import { parseCsvFile, type CsvTable } from "@/lib/data-update/csv";
 import { useAppStore } from "@/store/app-store";
 import { useUiStore } from "@/store/ui-store";
@@ -219,7 +220,7 @@ export function DataUpdateWindow() {
     setError(null);
   };
 
-  const addFieldToGroup = () => {
+  const addFieldToGroup = async () => {
     const fid = addFieldName.trim().replace(/\s+/g, "_");
     const flabel = (addFieldLabel.trim() || fid).trim();
     const gid = addFieldGroupId || editGroupId || catalog[0]?.id;
@@ -227,18 +228,39 @@ export function DataUpdateWindow() {
       setError("Field name and target group are required.");
       return;
     }
-    const next = catalog.map((g) => {
-      if (g.id !== gid) return g;
-      if (g.fields.some((f) => f.id.toLowerCase() === fid.toLowerCase())) return g;
-      return { ...g, fields: [...g.fields, { id: fid, label: flabel || fid }] };
-    });
-    persistCatalog(next);
-    setAddFieldName("");
-    setAddFieldLabel("");
+    if (!mapReady) {
+      setError("Wait until the web map finishes loading before adding a field.");
+      return;
+    }
+    setBusy(true);
     setError(null);
-    setResultMessage(
-      `Field "${flabel}" assigned to group "${gid}". If the column is not on the feature service yet, add it with the Pro toolbox (Web Map Layer – Add Field), then load values via Add Data.`,
-    );
+    setResultMessage(null);
+    try {
+      const service = await addFieldToWebMapLayers({
+        name: fid,
+        alias: flabel || fid,
+        type: addFieldType,
+      });
+      const next = catalog.map((g) => {
+        if (g.id !== gid) return g;
+        if (g.fields.some((f) => f.id.toLowerCase() === fid.toLowerCase())) return g;
+        return { ...g, fields: [...g.fields, { id: fid, label: flabel || fid }] };
+      });
+      persistCatalog(next);
+      setAddFieldName("");
+      setAddFieldLabel("");
+      if (service.failed.length && !service.created && !service.skipped) {
+        setError(service.message);
+      } else {
+        setResultMessage(
+          `Catalog: "${flabel}" in group "${gid}". Service: ${service.message}`,
+        );
+      }
+    } catch (err) {
+      setError(formatUnknownError(err));
+    } finally {
+      setBusy(false);
+    }
   };
 
   const moveField = (fieldId: string, fromGroup: string, toGroup: string) => {
@@ -383,7 +405,7 @@ export function DataUpdateWindow() {
                       const on = fieldIds.includes(field.id);
                       return (
                         <li key={field.id} role="option" aria-selected={on}>
-                          <label className={`check-list-item${on ? " is-selected" : ""}`}>
+                          <label className={`check-list-item${on ? " is-selected" : ""`}>
                             <span className="check-list-box" aria-hidden="true">
                               <input
                                 type="checkbox"
@@ -519,9 +541,8 @@ export function DataUpdateWindow() {
                     <h2>Add Field</h2>
                   </div>
                   <p className="section-hint" style={{ marginTop: 0 }}>
-                    Register a field in the dashboard catalog and assign it to a group. Creating the
-                    column on the hosted service requires admin rights (use the Pro toolbox{" "}
-                    <strong>Web Map Layer – Add Field(s)</strong>). Then load values via Add Data.
+                    Creates the attribute column on all Boundary and Chart layers in the web map, and registers it in the
+                    dashboard catalog. Requires edit privileges on the hosted feature service. Then load values via Add Data.
                   </p>
                   <div className="data-update-form-grid">
                     <label className="data-update-field">
@@ -574,8 +595,13 @@ export function DataUpdateWindow() {
                     </label>
                   </div>
                   <div className="data-update-form-actions">
-                    <button type="button" className="data-update-run-btn" onClick={addFieldToGroup}>
-                      Add field to catalog
+                    <button
+                      type="button"
+                      className="data-update-run-btn"
+                      disabled={busy}
+                      onClick={() => void addFieldToGroup()}
+                    >
+                      Add field to layers
                     </button>
                   </div>
                 </section>
