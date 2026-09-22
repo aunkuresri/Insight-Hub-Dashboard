@@ -91,6 +91,26 @@ function featureLayerAdminUrl(layer: EsriLayer): string {
   return base;
 }
 
+/**
+ * Hosted schema ops (addToDefinition) require the *admin* REST path.
+ * Public .../rest/services/.../FeatureServer/0/addToDefinition is treated as
+ * object id "addToDefinition" → "Object id 'addToDefinition' is not valid".
+ *
+ * .../rest/services/... → .../rest/admin/services/...
+ */
+function toAdminFeatureLayerUrl(layerUrl: string): string {
+  const base = layerUrl.replace(/\/+$/, "");
+  if (/\/rest\/admin\/services\//i.test(base)) return base;
+  if (/\/rest\/services\//i.test(base)) {
+    return base.replace(/\/rest\/services\//i, "/rest/admin/services/");
+  }
+  // Fallback: insert /admin before /services/ if present
+  if (/\/services\//i.test(base) && !/\/admin\//i.test(base)) {
+    return base.replace(/\/services\//i, "/admin/services/");
+  }
+  return base;
+}
+
 /** Use only cached credentials — never prompt (getCredential freezes UI under the modal). */
 async function resolveToken(serviceUrl: string): Promise<string | undefined> {
   try {
@@ -120,7 +140,8 @@ function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise
 }
 
 async function postAddToDefinition(layer: EsriLayer, fieldDef: Record<string, unknown>): Promise<void> {
-  const base = featureLayerAdminUrl(layer);
+  const publicUrl = featureLayerAdminUrl(layer);
+  const base = toAdminFeatureLayerUrl(publicUrl);
   const endpoint = `${base}/addToDefinition`;
 
   const esriRequest = (await import("@arcgis/core/request.js")).default as (
@@ -133,7 +154,10 @@ async function postAddToDefinition(layer: EsriLayer, fieldDef: Record<string, un
     };
   }>;
 
-  const token = await resolveToken(base);
+  // Token is usually registered against the public service URL
+  const token =
+    (await resolveToken(publicUrl)) ||
+    (await resolveToken(base));
 
   // ArcGIS REST expects application/x-www-form-urlencoded body, not a JS object
   const params = new URLSearchParams();
@@ -283,7 +307,7 @@ export async function addFieldToWebMapLayers(input: AddLayerFieldInput): Promise
   } else if (!created && skipped && !failed.length) {
     message = `Field "${name}" already exists on the web map layers.`;
   } else if (failed.length) {
-    message = `Could not create field on the feature service. ${failed[0]} Sign in to ArcGIS Online with edit privileges if the service is secured.`;
+    message = `Could not create field on the feature service. ${failed[0]} Schema changes need the hosted service admin endpoint and a user with update privileges on the layer.`;
   } else {
     message = `No layers were updated for field "${name}".`;
   }
