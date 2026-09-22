@@ -630,43 +630,86 @@ function buildPredominance(args: {
   requestedScheme: string;
 }): BuildResult {
   const { rows, fields, aliases, requestedScheme } = args;
-  const colors = colorsFromScheme(requestedScheme, fields.length);
+  const scheme = resolveScheme(requestedScheme, "Predominant Variable");
+  const palette = scheme === "Qualitative - Muted" ? QUALITATIVE_MUTED : QUALITATIVE_BRIGHT;
+  const observed = new Set<string>();
+
+  for (const row of rows) {
+    const cleaned = fields.map((f) => {
+      const n = safeNumber(row[f]);
+      return n == null ? 0 : Math.max(0, n);
+    });
+    const total = cleaned.reduce((s, v) => s + v, 0);
+    if (total <= 0) continue;
+    let best = 0;
+    for (let i = 1; i < cleaned.length; i += 1) {
+      if (cleaned[i]! > cleaned[best]!) best = i;
+    }
+    observed.add(fields[best]!);
+  }
+
+  const declarations = fields
+    .map((field, index) => {
+      return (
+        `var v${index}=${arcadeField(field)};` +
+        `if(IsEmpty(v${index})){v${index}=0;}` +
+        `v${index}=Max(v${index},0);`
+      );
+    })
+    .join("");
+  const totalExpression = fields.map((_, i) => `v${i}`).join("+");
+  const tests = fields
+    .map((field, index) => {
+      const conditions = fields
+        .map((_, other) => {
+          if (other === index) return null;
+          // Prefer earlier fields on ties (>= vs >).
+          const operator = index < other ? ">=" : ">";
+          return `v${index}${operator}v${other}`;
+        })
+        .filter(Boolean)
+        .join("&&");
+      return `if(${conditions || "true"}){return "${field.replaceAll('"', '\\"')}";}`;
+    })
+    .join("");
+  const expression =
+    `${declarations}var total=${totalExpression};if(total<=0){return '__NODATA__';}${tests}return '__NODATA__';`;
+
   const infos: Array<Record<string, unknown>> = [];
   const classes: LegendClass[] = [];
-
+  // Keep legend order = selection order; still only list fields that win somewhere.
   fields.forEach((field, index) => {
-    const rgb = colors[index] ?? QUALITATIVE_MUTED[index % QUALITATIVE_MUTED.length]!;
+    if (!observed.has(field)) return;
+    const rgb = palette[index % palette.length]!;
     const label = aliases[field] ?? field;
-    infos.push({ value: field, label, symbol: polygonSymbol(rgb) });
+    infos.push({ value: field, label, description: "", symbol: polygonSymbol(rgb) });
     classes.push({ label, color: rgb, value: field });
   });
 
-  const comparisons = fields
-    .map((field, index) => {
-      const expr = arcadeField(field);
-      const rest = fields
-        .filter((_, j) => j !== index)
-        .map((other) => `(${expr})>=(${arcadeField(other)})`)
-        .join("&&");
-      return `if(${rest}){return '${field}';`;
-    })
-    .join("");
-  const expression = `${comparisons}return '__NODATA__';`;
+  // If nothing observed (all zeros), still expose all selected fields in the legend.
+  if (!classes.length) {
+    fields.forEach((field, index) => {
+      const rgb = palette[index % palette.length]!;
+      const label = aliases[field] ?? field;
+      infos.push({ value: field, label, description: "", symbol: polygonSymbol(rgb) });
+      classes.push({ label, color: rgb, value: field });
+    });
+  }
 
   return {
     renderer: {
       type: "uniqueValue",
       valueExpression: expression,
-      valueExpressionTitle: "Predominant indicator",
-      legendOptions: { title: "Predominant indicator" },
-      defaultLabel: "No data / Tie",
+      valueExpressionTitle: "Predominant Variable",
+      legendOptions: { title: "Predominant Variable" },
+      defaultLabel: "No data / Other",
       defaultSymbol: defaultSymbol(),
       uniqueValueInfos: infos,
     },
     legend: {
       method: "Predominant Variable",
-      scheme: requestedScheme,
-      title: "Predominant indicator",
+      scheme,
+      title: "Predominant Variable",
       fields: fields.map((name) => ({ id: name, name, label: aliases[name] ?? name })),
       colors: Object.fromEntries(classes.map((c) => [c.value ?? c.label, c.color])),
       classes,
