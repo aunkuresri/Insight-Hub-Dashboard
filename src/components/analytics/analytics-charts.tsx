@@ -97,7 +97,7 @@ function CompareBarCard({
         {def.description ? <p>{def.description}</p> : null}
       </header>
       {data.length ? (
-        <div className="chart-body">
+        <div className="chart-body bar-body">
           <ResponsiveContainer width="100%" height={160}>
             <BarChart data={data} layout="vertical" margin={{ left: 8, right: 12 }}>
               <XAxis type="number" hide />
@@ -168,7 +168,7 @@ export function AnalyticsCharts() {
             <header>
               <h3>Top areas</h3>
             </header>
-            <div className="chart-body">
+            <div className="chart-body bar-body">
               <ResponsiveContainer width="100%" height={180}>
                 <BarChart data={barData} layout="vertical" margin={{ left: 8, right: 12 }}>
                   <XAxis type="number" hide />
