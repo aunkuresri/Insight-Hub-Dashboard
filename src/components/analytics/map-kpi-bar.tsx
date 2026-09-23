@@ -18,7 +18,7 @@ const INCIDENT_KPI_CARDS: Array<{
   {
     id: "Crime",
     label: "Crime",
-    icon: "security",
+    icon: "badge",
     insight: "Reported criminal incidents",
     tone: "red",
   },
@@ -83,7 +83,7 @@ export function MapKpiBar() {
           >
             <div className="map-kpi-card-head">
               <span className="map-kpi-card-icon" aria-hidden>
-                <calcite-icon icon={card.icon} scale="m" />
+                <calcite-icon icon={card.icon} scale="l" />
               </span>
               <p className="map-kpi-card-label">{card.label}</p>
             </div>
