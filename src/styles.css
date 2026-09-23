@@ -1,3 +1,61 @@
-@import "./styles/styles-part-0.css";
-@import "./styles/styles-part-1.css";
-@import "./styles/styles-part-2.css";
+@import "tailwindcss";
+@import "@esri/calcite-components/dist/calcite/calcite.css";
+@import "./map-panel-buttons.css";
+@import "./header-filters.css";
+@import "./styles/layout-v2.css";
+@import "./styles/legend-kpi.css";
+@import "./styles/auth-data-update.css";
+
+@theme {
+  --font-sans: "IBM Plex Sans", "Segoe UI", system-ui, sans-serif;
+  --font-display: "Sora", "IBM Plex Sans", system-ui, sans-serif;
+  --font-mono: "IBM Plex Mono", ui-monospace, monospace;
+
+  --color-bg: #f3f3f3;
+  --color-surface: #ffffff;
+  --color-elevated: #ffffff;
+  --color-fg: #151515;
+  --color-muted: #6a6a6a;
+  --color-subtle: #8a8a8a;
+  --color-accent: #0079c1;
+  --color-accent-fg: #ffffff;
+  --color-danger: #c7461a;
+  --color-warn: #d19a00;
+  --color-border: rgb(0 0 0 / 0.1);
+  --color-border-strong: rgb(0 0 0 / 0.18);
+  --color-header: #ffffff;
+
+  --chart-1: #0079c1;
+  --chart-2: #35ac46;
+  --chart-3: #ed953c;
+  --chart-4: #c7461a;
+  --chart-5: #8a8a8a;
+  --chart-6: #5a9bd5;
+
+  --radius-xs: 2px;
+  --radius-sm: 4px;
+  --radius-md: 6px;
+  --radius-lg: 8px;
+
+  --header-h: 56px;
+  --panel-left: 340px;
+  --panel-right: 320px;
+}
+
+@layer base {
+  html {
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+
+  body {
+    margin: 0;
+    font-family: var(--font-sans);
+    background: var(--color-bg);
+    color: var(--color-fg);
+  }
+
+  * {
+    box-sizing: border-box;
+  }
+}
