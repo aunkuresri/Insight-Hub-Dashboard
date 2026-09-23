@@ -880,6 +880,15 @@ th.ranking-col-filter {
   font-weight: 600;
   padding: 0 4px;
   text-align: right;
+  text-align-last: right;
+  direction: rtl; /* right-align closed value + option list */
+}
+
+/* Keep option labels readable LTR while right-aligned in the list */
+.ranking-col-label select option,
+.ranking-col-label select optgroup {
+  direction: ltr;
+  text-align: right;
 }
 
 .ranking-group-field {
