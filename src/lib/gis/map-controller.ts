@@ -196,7 +196,7 @@ export class MapController {
     modules.esriConfig.assetsPath = `https://js.arcgis.com/${config.arcgisVersion}/@arcgis/core/assets`;
     modules.esriConfig.request.timeout = 90_000;
 
-    if (config.oauthAppId && config.oauthAppId !== "68h4x8cVxR25yS14") {
+    /*if (config.oauthAppId && config.oauthAppId !== "68h4x8cVxR25yS14") {
       const [IdentityManager, OAuthInfo] = await Promise.all([
         import("@arcgis/core/identity/IdentityManager.js"),
         import("@arcgis/core/identity/OAuthInfo.js"),
@@ -209,7 +209,33 @@ export class MapController {
       (IdentityManager as { default: { registerOAuthInfos: (i: unknown[]) => void } }).default.registerOAuthInfos([
         info,
       ]);
-    }
+    }*/
+    if (config.oauthAppId && config.oauthAppId !== "YOUR_ENTERPRISE_APP_ID") {
+  const [IdentityManagerMod, OAuthInfoMod] = await Promise.all([
+    import("@arcgis/core/identity/IdentityManager.js"),
+    import("@arcgis/core/identity/OAuthInfo.js"),
+  ]);
+  const IdentityManager = IdentityManagerMod.default as {
+    registerOAuthInfos: (i: unknown[]) => void;
+    checkSignInStatus: (url: string) => Promise<{ token?: string }>;
+    getCredential: (url: string, opts?: { oAuthPopupConfirmation?: boolean }) => Promise<{ token?: string }>;
+  };
+  const OAuthInfo = OAuthInfoMod.default as new (p: unknown) => unknown;
+
+  const info = new OAuthInfo({
+    appId: config.oauthAppId,
+    portalUrl: config.portalUrl,
+    popup: false, // full-page redirect (safer with modals)
+  });
+  IdentityManager.registerOAuthInfos([info]);
+
+  // Force portal login on app open if not already signed in
+  try {
+    await IdentityManager.checkSignInStatus(config.portalUrl);
+  } catch {
+    await IdentityManager.getCredential(config.portalUrl);
+  }
+}
 
     const webmap = new modules.WebMap({
       portalItem: { id: config.webmapId, portal: { url: config.portalUrl } },
