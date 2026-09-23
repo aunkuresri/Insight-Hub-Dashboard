@@ -202,8 +202,10 @@ export class MapController {
   private widgets: Array<{ destroy: () => void }> = [];
   private filterToggleBtn: HTMLButtonElement | null = null;
   private symbologyToggleBtn: HTMLButtonElement | null = null;
+  private clearSelectionBtn: HTMLButtonElement | null = null;
   private onOpenLeft: (() => void) | null = null;
   private onOpenRight: (() => void) | null = null;
+  private onClearSelection: (() => void) | null = null;
   private extentOverride: unknown | null = null;
 
   async init(container: HTMLDivElement, events: MapEvents = {}): Promise<void> {
@@ -321,6 +323,16 @@ export class MapController {
     view.ui.add(basemapExpand, "top-left");
     view.ui.add(zoom, "bottom-left");
     view.ui.add(scaleBar, "bottom-right");
+
+    // Clear selection — same Esri widget style, under basemap expand (top-left stack)
+    this.clearSelectionBtn = this.createPanelToggleButton({
+      title: "Clear selection",
+      icon: "erase",
+      onClick: () => this.onClearSelection?.(),
+    });
+    this.clearSelectionBtn.classList.add("map-clear-selection-btn");
+    this.clearSelectionBtn.style.display = "none";
+    view.ui.add(this.clearSelectionBtn, "top-left");
 
     this.onOpenLeft = events.onOpenLeftPanel ?? null;
     this.onOpenRight = events.onOpenRightPanel ?? null;
@@ -607,44 +619,71 @@ export class MapController {
   }
 
   /**
-   * Click a boundary polygon to drive KPI cards + analytics for that area only.
+   * Click a boundary polygon to drive KPI cards for that area only.
    * Chart layers are ignored. Empty clicks do not clear (use Clear selection).
    */
   private async handleMapClick(event: unknown, events: MapEvents): Promise<void> {
     if (!this.view || !events.onFeatureSelect) return;
     try {
-      const response = await this.view.hitTest(event);
-      const hit = (response?.results ?? []).find((r) => {
+      const response = await this.view.hitTest(event as never);
+      const hits = (response?.results ?? []).filter((r) => {
         const layer = r.layer;
-        if (!layer || layer.type !== "feature") return false;
+        if (!layer) return false;
+        if (layer.type && layer.type !== "feature") return false;
         if (isChartLayer(layer)) return false;
-        return Boolean(r.graphic?.geometry);
+        return Boolean(r.graphic);
       });
-      if (!hit?.graphic || !hit.layer) return;
+      if (!hits.length) return;
 
-      const layer = hit.layer;
-      const graphic = hit.graphic;
-      const attrs = graphic.attributes ?? {};
+      const hit = hits[0];
+      const layer = hit.layer!;
+      const graphic = hit.graphic!;
+      const attrs = (graphic.attributes ?? {}) as Record<string, unknown>;
 
       const title = (layer.title || "").trim().toLowerCase();
       const level =
         ADMIN_LEVELS.find((l) => l.layerTitles.boundary.trim().toLowerCase() === title) ??
-        ADMIN_LEVELS.find((l) => title.includes(l.id)) ??
+        ADMIN_LEVELS.find((l) => title.includes(l.label.toLowerCase()) || title.includes(l.id)) ??
         null;
 
-      const nameField = level?.nameField ?? "adm1_en";
-      const name = String(attrs[nameField] ?? attrs[nameField.toLowerCase()] ?? "").trim();
+      let name = "";
+      if (level) {
+        name = String(attrs[level.nameField] ?? attrs[level.nameField.toLowerCase()] ?? "").trim();
+      }
+      if (!name) {
+        for (const l of [...ADMIN_LEVELS].reverse()) {
+          const v = String(attrs[l.nameField] ?? attrs[l.nameField.toLowerCase()] ?? "").trim();
+          if (v) {
+            name = v;
+            break;
+          }
+        }
+      }
+      if (!name) {
+        for (const [key, val] of Object.entries(attrs)) {
+          if (/adm\d_en$/i.test(key) && String(val ?? "").trim()) {
+            name = String(val).trim();
+            break;
+          }
+        }
+      }
       if (!name) return;
 
+      const rawGeom = graphic.geometry;
       const geometry =
-        typeof (graphic.geometry as { clone?: () => unknown })?.clone === "function"
-          ? (graphic.geometry as { clone: () => unknown }).clone()
-          : graphic.geometry;
+        rawGeom && typeof (rawGeom as { clone?: () => unknown }).clone === "function"
+          ? (rawGeom as { clone: () => unknown }).clone()
+          : rawGeom;
+
+      const resolvedLevel =
+        level ??
+        [...ADMIN_LEVELS].reverse().find((l) => String(attrs[l.nameField] ?? "").trim() === name) ??
+        null;
 
       const ancestors: Array<{ label: string; value: string }> = [];
-      if (level) {
+      if (resolvedLevel) {
         for (const parent of ADMIN_LEVELS) {
-          if (parent.id === level.id) break;
+          if (parent.id === resolvedLevel.id) break;
           const v = String(attrs[parent.nameField] ?? "").trim();
           if (v) ancestors.push({ label: parent.label, value: v });
         }
@@ -654,9 +693,9 @@ export class MapController {
 
       events.onFeatureSelect({
         name,
-        geometry,
+        geometry: geometry ?? null,
         info: {
-          unitLabel: level?.label ?? "Area",
+          unitLabel: resolvedLevel?.label ?? "Area",
           areaName: name,
           ancestors,
         },
@@ -697,6 +736,16 @@ export class MapController {
     }
   }
 
+  /** Show/hide the Clear selection control under the basemap button. */
+  setClearSelectionVisible(visible: boolean): void {
+    if (!this.clearSelectionBtn) return;
+    this.clearSelectionBtn.style.display = visible ? "flex" : "none";
+  }
+
+  setOnClearSelection(handler: (() => void) | null): void {
+    this.onClearSelection = handler;
+  }
+
   async ensureChartCalloutLayer(): Promise<void> {
     if (this.chartCalloutLayer || !this.webmap || !this.modules) return;
     try {
@@ -707,7 +756,7 @@ export class MapController {
         visible: boolean;
       } }).default({ title: "Chart callouts", listMode: "hide" });
       this.chartCalloutLayer = layer;
-      this.webmap.layers.add?.(layer as never);
+      (this.webmap.layers as { add?: (l: unknown) => void }).add?.(layer);
     } catch {
       /* optional */
     }
