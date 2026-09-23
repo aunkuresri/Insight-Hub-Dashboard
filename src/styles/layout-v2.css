@@ -428,3 +428,15 @@
     display: none;
   }
 }
+
+/* Ranking column dropdowns — left-aligned for all three */
+.ranking-col-label select {
+  text-align: left !important;
+  text-align-last: left !important;
+  direction: ltr !important;
+}
+.ranking-col-label select option,
+.ranking-col-label select optgroup {
+  text-align: left !important;
+  direction: ltr !important;
+}
