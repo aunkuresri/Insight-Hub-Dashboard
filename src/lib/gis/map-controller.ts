@@ -210,7 +210,7 @@ export class MapController {
         info,
       ]);
     }*/
-    if (config.oauthAppId && config.oauthAppId !== "YOUR_ENTERPRISE_APP_ID") {
+    if (config.oauthAppId && config.oauthAppId !== "68h4x8cVxR25yS14") {
   const [IdentityManagerMod, OAuthInfoMod] = await Promise.all([
     import("@arcgis/core/identity/IdentityManager.js"),
     import("@arcgis/core/identity/OAuthInfo.js"),
