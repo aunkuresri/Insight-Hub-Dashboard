@@ -123,10 +123,15 @@ export function AnalyticsCharts() {
   const kpis = useAppStore((s) => s.kpis);
   const ranking = useAppStore((s) => s.ranking);
   const group = useAppStore((s) => s.analyticsGroup);
+  const rankingColumns = useAppStore((s) => s.rankingColumns);
+  const analyticsMetric = useAppStore((s) => s.analyticsMetric);
 
   const chartDefs = compositionChartsForGroup(group);
   const pieDefs = chartDefs.filter((d) => d.type !== "compare");
   const compareDefs = chartDefs.filter((d) => d.type === "compare");
+
+  const primaryMetricId = rankingColumns[0] || analyticsMetric;
+  const primaryMetricLabel = primaryMetricId ? labelForField(primaryMetricId) : "";
 
   const barData = (ranking ?? []).slice(0, 8).map((row) => ({
     name: row.name.length > 12 ? `${row.name.slice(0, 12)}…` : row.name,
@@ -167,6 +172,7 @@ export function AnalyticsCharts() {
           <article className="chart-card">
             <header>
               <h3>Top areas</h3>
+              {primaryMetricLabel ? <p>Ranked by {primaryMetricLabel}</p> : null}
             </header>
             <div className="chart-body bar-body">
               <ResponsiveContainer width="100%" height={180}>
