@@ -225,7 +225,8 @@ async function postAddToDefinition(layer: EsriLayer, fieldDef: Record<string, un
  * Collect Boundary + Chart layers for every admin level (Division → Union).
  * Falls back to title heuristics when exact configured titles are missing.
  */
-function collectTargetLayers(
+
+/*function collectTargetLayers(
   map: NonNullable<ReturnType<typeof getMapController>>,
 ): EsriLayer[] {
   const byUrl = new Map<string, EsriLayer>();
@@ -252,6 +253,41 @@ function collectTargetLayers(
   }
 
   return Array.from(byUrl.values());
+}*/
+
+/**
+ * Collect every feature layer in the web map (Division–Union Boundary/Chart
+ * and any other feature layers). Dedupe by title + url + layerId so layers
+ * that share a base service URL are not collapsed into one target.
+ */
+function collectTargetLayers(
+  map: NonNullable<ReturnType<typeof getMapController>>,
+): EsriLayer[] {
+  const byKey = new Map<string, EsriLayer>();
+
+  const add = (layer: EsriLayer | null | undefined) => {
+    if (!layer || layer.type !== "feature") return;
+    const url = (layer.url || "").toLowerCase();
+    const title = (layer.title || "").toLowerCase();
+    const layerId = String((layer as { layerId?: number }).layerId ?? "");
+    const key = `${title}|${url}|${layerId}`;
+    if (!title && !url) return;
+    if (byKey.has(key)) return;
+    byKey.set(key, layer);
+  };
+
+  // All feature layers currently loaded in the web map
+  for (const layer of map.featureLayers()) {
+    add(layer);
+  }
+
+  // Also resolve by configured titles (covers title mismatches / groups)
+  for (const level of ADMIN_LEVELS) {
+    add(map.findLayer(level.layerTitles.boundary));
+    add(map.findLayer(level.layerTitles.chart));
+  }
+
+  return Array.from(byKey.values());
 }
 
 /**
