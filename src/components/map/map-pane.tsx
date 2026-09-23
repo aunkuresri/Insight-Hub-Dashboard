@@ -68,6 +68,15 @@ export function MapPane() {
           },
           onOpenLeftPanel: () => useAppStore.getState().setLeftOpen(true),
           onOpenRightPanel: () => useAppStore.getState().setRightOpen(true),
+          onFeatureSelect: (payload) => {
+            if (cancelled) return;
+            const store = useAppStore.getState();
+            if (!payload) {
+              store.clearMapSelection();
+              return;
+            }
+            store.setMapSelection(payload.name, payload.geometry, payload.info);
+          },
         });
       } catch (err) {
         if (!cancelled) {

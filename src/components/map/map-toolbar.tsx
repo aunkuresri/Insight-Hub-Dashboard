@@ -15,13 +15,15 @@ const BASEMAPS: Array<{ id: string; label: string; style: string }> = [
 ];
 
 /**
- * Horizontal map toolbar: zoom − / +, home, legend, basemap.
+ * Horizontal map toolbar: zoom − / +, home, legend, basemap, clear selection.
  * Centered at the top of the map with even gaps.
  */
 export function MapToolbar() {
   const [open, setOpen] = useState<PanelId>(null);
   const [activeBasemap, setActiveBasemap] = useState<string>("streets-vector");
   const applied = useAppStore((s) => s.applied);
+  const selectionName = useAppStore((s) => s.selectionName);
+  const clearMapSelection = useAppStore((s) => s.clearMapSelection);
   const hasLegend = Boolean(applied.boundary || applied.chart);
 
   useEffect(() => {
@@ -95,6 +97,17 @@ export function MapToolbar() {
         >
           <calcite-icon icon="basemap" scale="s" />
         </button>
+        {selectionName ? (
+          <button
+            type="button"
+            className="map-tool-btn map-tool-btn--clear-selection"
+            title={`Clear selection (${selectionName})`}
+            aria-label="Clear selection"
+            onClick={() => clearMapSelection()}
+          >
+            <calcite-icon icon="erase" scale="s" />
+          </button>
+        ) : null}
       </div>
 
       {open === "legend" ? (
