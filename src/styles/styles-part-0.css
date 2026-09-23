@@ -1,10 +1,10 @@
 @import "tailwindcss";
 @import "@esri/calcite-components/dist/calcite/calcite.css";
-@import "./map-panel-buttons.css";
-@import "./header-filters.css";
-@import "./styles/layout-v2.css";
-@import "./styles/legend-kpi.css";
-@import "./styles/auth-data-update.css";
+@import "../map-panel-buttons.css";
+@import "../header-filters.css";
+@import "./layout-v2.css";
+@import "./legend-kpi.css";
+@import "./auth-data-update.css";
 
 @theme {
   --font-sans: "IBM Plex Sans", "Segoe UI", system-ui, sans-serif;
