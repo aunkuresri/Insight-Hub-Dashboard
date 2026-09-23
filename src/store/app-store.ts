@@ -541,6 +541,59 @@ export const useAppStore = create<AppState>((set, get) => ({
               });
         map.applyRenderer(layer, built.renderer);
         layer.visible = true;
+
+
+
+        //Chart_Label
+        if (symLayerGroup === "chart") {
+          const totalExpr = names
+            .map((f) => `When(IsEmpty($feature[${JSON.stringify(f)}]),0,Max($feature[${JSON.stringify(f)}],0))`)
+            .join(" + ");
+        
+          const expressionInfos = names.map((f, i) => {
+            const label = aliases[f] ?? f;
+            const fRef = `$feature[${JSON.stringify(f)}]`;
+            return {
+              name: `slice_${i}`,
+              title: label,
+              expression: `
+                var v = When(IsEmpty(${fRef}), 0, Max(${fRef}, 0));
+                var t = ${totalExpr};
+                var pct = IIF(t == 0, 0, Round(100 * v / t, 1));
+                return Text(v) + " (" + Text(pct) + "%)";
+              `,
+            };
+          });
+        
+          const nameField =
+            // optional: show division/district name if present
+            schema.find((s) => /adm[1-4]_en/i.test(s.name))?.name;
+        
+          layer.popupTemplate = {
+            title: nameField ? `{${nameField}}` : layer.title || "Chart",
+            expressionInfos,
+            content: [
+              {
+                type: "fields",
+                fieldInfos: expressionInfos.map((e) => ({
+                  fieldName: `expression/${e.name}`,
+                  label: e.title,
+                })),
+              },
+            ],
+          };
+          layer.popupEnabled = true;
+          layer.outFields = ["*"];
+        }
+
+
+
+
+        
+
+
+
+        
         lastLegend = built.legend;
       }
       set({
