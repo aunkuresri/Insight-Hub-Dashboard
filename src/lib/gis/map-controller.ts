@@ -177,6 +177,20 @@ export class MapController {
   private modules: EsriModules | null = null;
   private originalRenderers = new Map<string, unknown>();
   private originalPopupTemplates = new Map<string, unknown>();
+
+
+
+
+  private chartCalloutLayer: {
+    removeAll: () => void;
+    addMany: (g: unknown[]) => void;
+    visible: boolean;
+  } | null = null;
+
+
+
+  
+  
   private initialViewpoint: unknown = null;
   private handles: Array<{ remove: () => void }> = [];
   private highlightHandle: { remove: () => void } | null = null;
@@ -614,6 +628,106 @@ export class MapController {
     }
   }
 
+
+
+  async ensureChartCalloutLayer(): Promise<void> {
+    if (this.chartCalloutLayer || !this.webmap || !this.modules) return;
+    const GraphicsLayerMod = await import("@arcgis/core/layers/GraphicsLayer.js");
+    const layer = new (GraphicsLayerMod as { default: new (p: unknown) => unknown }).default({
+      id: "chart-slice-callouts",
+      title: "Chart slice labels",
+      listMode: "hide",
+    }) as {
+      removeAll: () => void;
+      addMany: (g: unknown[]) => void;
+      visible: boolean;
+    };
+    (this.webmap as { add: (l: unknown) => void }).add(layer);
+    this.chartCalloutLayer = layer;
+  }
+  
+  clearChartCallouts(): void {
+    this.chartCalloutLayer?.removeAll();
+  }
+  
+  async setChartCallouts(
+    items: Array<{
+      geometry: unknown;
+      lines: Array<{ text: string; color: [number, number, number] }>;
+    }>,
+  ): Promise<void> {
+    await this.ensureChartCalloutLayer();
+    this.clearChartCallouts();
+    if (!this.chartCalloutLayer || !items.length) return;
+  
+    const [GraphicMod, PointMod] = await Promise.all([
+      import("@arcgis/core/Graphic.js"),
+      import("@arcgis/core/geometry/Point.js"),
+    ]);
+    const Graphic = (GraphicMod as { default: new (p: unknown) => unknown }).default;
+    const Point = (PointMod as { default: new (p: unknown) => unknown }).default;
+  
+    const graphics: unknown[] = [];
+    for (const item of items) {
+      const g = item.geometry as {
+        type?: string;
+        longitude?: number;
+        latitude?: number;
+        x?: number;
+        y?: number;
+        spatialReference?: unknown;
+        centroid?: { x: number; y: number; spatialReference?: unknown };
+        extent?: { center?: { x: number; y: number; spatialReference?: unknown } };
+      };
+      // Point or polygon centroid
+      let x = g.longitude ?? g.x;
+      let y = g.latitude ?? g.y;
+      let sr = g.spatialReference;
+      if (x == null || y == null) {
+        const c = g.centroid ?? g.extent?.center;
+        if (c) {
+          x = c.x;
+          y = c.y;
+          sr = c.spatialReference ?? sr;
+        }
+      }
+      if (x == null || y == null) continue;
+  
+      const n = item.lines.length || 1;
+      item.lines.forEach((line, i) => {
+        // Spread labels in a ring around the pie
+        const angle = (Math.PI * 2 * i) / n - Math.PI / 2;
+        const dist = 0.15; // map units; tune if labels sit too close/far
+        const pt = new Point({
+          x: x! + Math.cos(angle) * dist,
+          y: y! + Math.sin(angle) * dist,
+          spatialReference: sr,
+        });
+        graphics.push(
+          new Graphic({
+            geometry: pt,
+            symbol: {
+              type: "text",
+              text: line.text,
+              color: [...line.color, 255],
+              haloColor: [255, 255, 255, 255],
+              haloSize: 1.5,
+              font: { size: 9, weight: "bold", family: "Arial" },
+              horizontalAlignment: "center",
+              verticalAlignment: "middle",
+            },
+          }),
+        );
+      });
+    }
+    this.chartCalloutLayer.addMany(graphics);
+  }
+
+
+
+
+  
+
   applyRenderer(layer: EsriLayer, rendererJson: EsriRenderer): void {
     if (!this.modules) return;
     if (!this.originalRenderers.has(layer.id)) {
@@ -633,7 +747,12 @@ export class MapController {
     }
   }
 
+  /*resetRenderers(group?: LayerGroupId): void {
+    for (const layer of this.featureLayers()) {*/
   resetRenderers(group?: LayerGroupId): void {
+    if (!group || group === "chart") {
+      this.clearChartCallouts();
+    }
     for (const layer of this.featureLayers()) {
       if (group) {
         const chart = isChartLayer(layer);
