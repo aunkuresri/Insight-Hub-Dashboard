@@ -37,7 +37,7 @@ export function SignInGate({
   return <>{fallback ?? <CredentialSignIn />}</>;
 }
 
-/** User ID + password form (default: esri / esri). */
+/** User ID + password form (legacy; not used when enterprise OAuth is the gate). */
 export function CredentialSignIn() {
   const [userId, setUserId] = useState("");
   const [password, setPassword] = useState("");
@@ -163,8 +163,22 @@ export function UserButton() {
                 onClick={() => {
                   setSigningOut(true);
                   clearLocalSession();
-                  setSigningOut(false);
-                  setOpen(false);
+                  // Also end ArcGIS Enterprise / portal OAuth session when present.
+                  void (async () => {
+                    try {
+                      const IdentityManager = (
+                        await import("@arcgis/core/identity/IdentityManager.js")
+                      ).default as { destroyCredentials?: () => void };
+                      IdentityManager.destroyCredentials?.();
+                    } catch {
+                      /* optional — portal modules may not be loaded yet */
+                    }
+                    setSigningOut(false);
+                    setOpen(false);
+                    if (typeof window !== "undefined") {
+                      window.location.reload();
+                    }
+                  })();
                 }}
               >
                 <calcite-icon icon="sign-out" scale="s" />

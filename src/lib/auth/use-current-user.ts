@@ -23,6 +23,15 @@ export const DEV_USER: AppUser = {
   isDevFallback: true,
 };
 
+/** Shown in the profile button when enterprise (portal) OAuth is the auth path. */
+export const ENTERPRISE_USER: AppUser = {
+  id: "enterprise-user",
+  displayName: "Portal User",
+  primaryEmail: null,
+  profileImageUrl: null,
+  isDevFallback: false,
+};
+
 export type CurrentUserState = {
   user: AppUser | null;
   isPending: boolean;
@@ -60,7 +69,8 @@ function localSessionToUser(): AppUser | null {
 }
 
 /**
- * When auth is enabled, uses local User ID + password session (sessionStorage).
+ * When auth is enabled, uses local session if present; otherwise the enterprise
+ * portal user so the profile button and sign-out remain available.
  * When auth is disabled, returns the dev user.
  *
  * Always calls the same hooks (no conditional returns before hooks).
@@ -73,7 +83,9 @@ export function useCurrentUserState(): CurrentUserState {
   );
 
   if (!authEnabled) return { user: DEV_USER, isPending: false };
-  return { user: sessionUser, isPending: false };
+  // No local User ID/password session — enterprise portal login is the gate.
+  // Still expose a profile user so the header avatar + sign-out stay available.
+  return { user: sessionUser ?? ENTERPRISE_USER, isPending: false };
 }
 
 export function useCurrentUser(): AppUser | null {
