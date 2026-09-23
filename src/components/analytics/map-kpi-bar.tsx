@@ -18,7 +18,7 @@ const INCIDENT_KPI_CARDS: Array<{
   {
     id: "Crime",
     label: "Crime",
-    icon: "hammer",
+    icon: "emergency",
     insight: "Reported criminal incidents",
     tone: "red",
   },
