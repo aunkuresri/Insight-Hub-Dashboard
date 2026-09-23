@@ -29,9 +29,11 @@ function resizeMapView() {
 export function MapPane() {
   const hostRef = useRef<HTMLDivElement | null>(null);
   const setMapReady = useAppStore((s) => s.setMapReady);
+  const mapReady = useAppStore((s) => s.mapReady);
   const setMapError = useAppStore((s) => s.setMapError);
   const setScale = useAppStore((s) => s.setScale);
   const refreshAnalytics = useAppStore((s) => s.refreshAnalytics);
+  const selectionName = useAppStore((s) => s.selectionName);
   const leftOpen = useAppStore((s) => s.leftOpen);
   const rightOpen = useAppStore((s) => s.rightOpen);
   const analyticsOpen = useUiStore((s) => s.analyticsWindowOpen);
@@ -78,6 +80,12 @@ export function MapPane() {
             store.setMapSelection(payload.name, payload.geometry, payload.info);
           },
         });
+        if (!cancelled) {
+          const map = getMapController();
+          map?.setOnClearSelection?.(() => {
+            useAppStore.getState().clearMapSelection();
+          });
+        }
       } catch (err) {
         if (!cancelled) {
           setMapError(err instanceof Error ? err.message : "The web map could not be loaded.");
@@ -100,6 +108,11 @@ export function MapPane() {
     relabelPanelToggles();
     window.setTimeout(() => resizeMapView(), 80);
   }, [leftOpen, rightOpen]);
+
+  // Clear selection button under basemap — only when a polygon is selected
+  useEffect(() => {
+    getMapController()?.setClearSelectionVisible?.(Boolean(selectionName));
+  }, [selectionName, mapReady]);
 
   // Re-layout map when analytics split / dock toggles
   useEffect(() => {
