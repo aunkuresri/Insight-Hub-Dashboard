@@ -499,6 +499,193 @@ export class MapController {
     await this.zoomToFilters(filters);
   }
 
+  async applyEdits(
+    layer: EsriLayer,
+    updates: Array<{ attributes: Record<string, unknown> }>,
+  ): Promise<{ updated: number }> {
+    if (!updates.length) return { updated: 0 };
+
+    const oidField = this.resolveObjectIdFieldName(layer);
+
+    const normalized = updates.map((u) => {
+      const attrs = { ...(u.attributes ?? {}) };
+      let oid: unknown = undefined;
+      for (const key of Object.keys(attrs)) {
+        if (key.toLowerCase() === "objectid" || key.toLowerCase() === "fid" || key.toLowerCase() === "oid") {
+          oid = attrs[key];
+          delete attrs[key];
+        }
+      }
+      if (oid == null && oidField && attrs[oidField] != null) {
+        oid = attrs[oidField];
+      }
+      if (oid != null && oidField) {
+        attrs[oidField] = oid;
+      }
+      for (const key of Object.keys(attrs)) {
+        if (
+          key !== oidField &&
+          (key.toLowerCase() === "objectid" || key.toLowerCase() === "fid" || key.toLowerCase() === "oid")
+        ) {
+          delete attrs[key];
+        }
+      }
+      return { attributes: attrs };
+    });
+
+    // REST applyEdits — exact field names (avoids JS API OBJECTID rewrite).
+    const layerUrl = typeof layer.url === "string" ? layer.url.replace(/\/$/, "") : "";
+    if (layerUrl && /\/FeatureServer\/\d+$/i.test(layerUrl)) {
+      return this.applyEditsRest(layer, layerUrl, oidField, normalized);
+    }
+
+    if (typeof layer.applyEdits !== "function") {
+      throw new Error(
+        `Layer "${layer.title}" does not support applyEdits. Confirm the feature service allows updates.`,
+      );
+    }
+    try {
+      (layer as { objectIdField?: string }).objectIdField = oidField;
+    } catch {
+      /* ignore */
+    }
+    const result = await layer.applyEdits({ updateFeatures: normalized });
+    const rows = result?.updateFeatureResults ?? [];
+    const failed = rows.filter((r) => r.error);
+    if (failed.length === rows.length && rows.length > 0) {
+      const first = failed[0]?.error;
+      let detail = "";
+      if (first && typeof first === "object") {
+        const e = first as Record<string, unknown>;
+        detail = String(e.message ?? e.description ?? e.details ?? "").trim();
+      } else if (typeof first === "string") {
+        detail = first.trim();
+      }
+      throw new Error(
+        detail
+          ? `Edit failed on "${layer.title}": ${detail}`
+          : `All ${failed.length} edit(s) failed on "${layer.title}". Sign in to ArcGIS with edit rights, or enable editing on the service.`,
+      );
+    }
+    return { updated: rows.filter((r) => !r.error).length || updates.length };
+  }
+
+  /** REST applyEdits — same path as Pro toolbox fl.edit_features. */
+  private async applyEditsRest(
+    layer: EsriLayer,
+    layerUrl: string,
+    oidField: string,
+    normalized: Array<{ attributes: Record<string, unknown> }>,
+  ): Promise<{ updated: number }> {
+    let token = "";
+    try {
+      const IdentityManager = await import("@arcgis/core/identity/IdentityManager.js");
+      const im = (
+        IdentityManager as {
+          default: {
+            findCredential?: (url: string) => { token?: string } | null;
+            checkSignInStatus?: (url: string) => Promise<{ token?: string }>;
+          };
+        }
+      ).default;
+      const cred = im.findCredential?.(layerUrl) ?? null;
+      if (cred?.token) {
+        token = cred.token;
+      } else if (typeof im.checkSignInStatus === "function") {
+        try {
+          const signed = await im.checkSignInStatus(layerUrl);
+          if (signed?.token) token = signed.token;
+        } catch {
+          /* anonymous */
+        }
+      }
+    } catch {
+      /* identity optional */
+    }
+
+    const BATCH = 250;
+    let updated = 0;
+    const errors: string[] = [];
+
+    for (let i = 0; i < normalized.length; i += BATCH) {
+      const batch = normalized.slice(i, i + BATCH);
+      const body = new URLSearchParams();
+      body.set("f", "json");
+      body.set("rollbackOnFailure", "false");
+      body.set("updates", JSON.stringify(batch.map((u) => ({ attributes: u.attributes }))));
+      if (token) body.set("token", token);
+
+      const res = await fetch(`${layerUrl}/applyEdits`, {
+        method: "POST",
+        headers: { "Content-Type": "application/x-www-form-urlencoded" },
+        body: body.toString(),
+      });
+
+      let json: {
+        updateResults?: Array<{
+          success?: boolean;
+          objectId?: number;
+          error?: { description?: string; code?: number };
+        }>;
+        error?: { message?: string; details?: string[] };
+      };
+      try {
+        json = await res.json();
+      } catch {
+        throw new Error(`Edit failed on "${layer.title}": invalid response from applyEdits.`);
+      }
+
+      if (json.error) {
+        const msg = json.error.message || json.error.details?.join("; ") || "applyEdits error";
+        throw new Error(`Edit failed on "${layer.title}": ${msg}`);
+      }
+
+      const rows = json.updateResults ?? [];
+      for (const r of rows) {
+        if (r.success) updated++;
+        else errors.push(r.error?.description || `code ${r.error?.code ?? "?"}`);
+      }
+    }
+
+    if (!updated && errors.length) {
+      throw new Error(
+        `Edit failed on "${layer.title}": ${errors[0]}${errors.length > 1 ? ` (+${errors.length - 1} more)` : ""}. OID field used: ${oidField}.`,
+      );
+    }
+    if (!updated) updated = normalized.length;
+    return { updated };
+  }
+
+  /**
+   * Prefer the oid field from schema by type (esriFieldTypeOID / oid), same as
+   * the Pro toolbox. Do not trust layer.objectIdField first — it is often
+   * "OBJECTID" while the hosted feature service field is "objectid".
+   */
+  private resolveObjectIdFieldName(layer: EsriLayer): string {
+    const fields = layer.fields ?? [];
+    const byType = fields.find((f) => {
+      const t = (f.type || "").toLowerCase();
+      return t === "oid" || t === "esrifieldtypeoid" || t.includes("oid");
+    });
+    if (byType) return byType.name;
+    for (const name of ["objectid", "OBJECTID", "ObjectId", "fid", "FID", "oid", "OID"]) {
+      const hit = fields.find((f) => f.name === name);
+      if (hit) return hit.name;
+    }
+    const lower = fields.find(
+      (f) =>
+        f.name.toLowerCase() === "objectid" ||
+        f.name.toLowerCase() === "fid" ||
+        f.name.toLowerCase() === "oid",
+    );
+    if (lower) return lower.name;
+    if (typeof layer.objectIdField === "string" && layer.objectIdField.trim()) {
+      return layer.objectIdField.trim();
+    }
+    return "objectid";
+  }
+
+
   setExtentOverride(extent: unknown | null): void {
     if (!extent) {
       this.extentOverride = null;
