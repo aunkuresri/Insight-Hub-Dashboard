@@ -1,65 +1,71 @@
 @import "tailwindcss";
 @import "@esri/calcite-components/dist/calcite/calcite.css";
-@import "./styles/auth-data-update.css";
-@import "./styles/header-filters.css";
+@import "./map-panel-buttons.css";
+@import "./header-filters.css";
 @import "./styles/layout-v2.css";
 @import "./styles/legend-kpi.css";
+@import "./styles/auth-data-update.css";
 
-:root {
-  color-scheme: light;
-  --font-sans: "Avenir Next", "Avenir", "Helvetica Neue", Helvetica, Arial, sans-serif;
+@theme {
+  --font-sans: "IBM Plex Sans", "Segoe UI", system-ui, sans-serif;
+  --font-display: "Sora", "IBM Plex Sans", system-ui, sans-serif;
+  --font-mono: "IBM Plex Mono", ui-monospace, monospace;
+
   --color-bg: #f3f3f3;
-  --color-panel: #ffffff;
+  --color-surface: #ffffff;
   --color-elevated: #ffffff;
   --color-fg: #151515;
   --color-muted: #6a6a6a;
-  --color-border: rgba(0, 0, 0, 0.12);
-  --color-border-strong: rgba(0, 0, 0, 0.22);
+  --color-subtle: #8a8a8a;
   --color-accent: #0079c1;
-  --color-accent-soft: #e8f3fa;
+  --color-accent-fg: #ffffff;
   --color-danger: #c7461a;
-  --color-success: #2a8a38;
-  --radius-sm: 4px;
-  --radius-md: 8px;
-  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.08);
-  --shadow-md: 0 4px 16px rgba(0, 0, 0, 0.12);
+  --color-warn: #d19a00;
+  --color-border: rgb(0 0 0 / 0.1);
+  --color-border-strong: rgb(0 0 0 / 0.18);
+  --color-header: #ffffff;
+
   --chart-1: #0079c1;
   --chart-2: #35ac46;
-  --chart-3: #ed9a3f;
+  --chart-3: #ed953c;
   --chart-4: #c7461a;
-  --chart-5: #6b4c9a;
-  --chart-6: #338033;
-  --header-h: 52px;
-  --panel-w: 300px;
+  --chart-5: #8a8a8a;
+  --chart-6: #5a9bd5;
+
+  --radius-xs: 2px;
+  --radius-sm: 4px;
+  --radius-md: 6px;
+  --radius-lg: 8px;
+
+  --header-h: 56px;
+  --panel-left: 340px;
+  --panel-right: 320px;
 }
 
-* {
-  box-sizing: border-box;
-}
+@layer base {
+  html {
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
 
-html,
-body,
-#__next {
-  height: 100%;
-  margin: 0;
-}
+  body {
+    margin: 0;
+    min-height: 100vh;
+    font-family: var(--font-sans);
+    color: var(--color-fg);
+    background: var(--color-bg);
+  }
 
-body {
-  font-family: var(--font-sans);
-  color: var(--color-fg);
-  background: var(--color-bg);
-  -webkit-font-smoothing: antialiased;
-}
+  * {
+    box-sizing: border-box;
+  }
 
-button,
-input,
-select,
-textarea {
-  font: inherit;
-}
-
-a {
-  color: var(--color-accent);
+  button,
+  input,
+  select,
+  textarea {
+    font: inherit;
+  }
 }
 
 .tabular-nums {
@@ -117,7 +123,7 @@ a {
 .workbench {
   display: grid;
   grid-template-rows: var(--header-h) minmax(0, 1fr);
-  height: 100%;
+  height: 100vh;
   min-height: 0;
 }
 
@@ -133,8 +139,6 @@ a {
   min-width: 0;
   min-height: 0;
   background: #e8ecf0;
-  display: flex;
-  flex-direction: column;
 }
 
 .map-host {
@@ -150,7 +154,7 @@ a {
   align-items: center;
   justify-content: center;
   gap: 12px;
-  background: rgba(255, 255, 255, 0.88);
+  background: rgb(255 255 255 / 0.88);
   z-index: 20;
   padding: 24px;
   text-align: center;
@@ -166,28 +170,28 @@ a {
   border-radius: var(--radius-sm);
   font-size: 13px;
   font-weight: 600;
-  box-shadow: var(--shadow-md);
+  box-shadow: 0 4px 16px rgb(0 0 0 / 0.12);
 }
 
 .toast-danger {
   background: #f8e4de;
   color: #9e3614;
-  border: 1px solid rgba(199, 70, 26, 0.25);
+  border: 1px solid rgb(199 70 26 / 0.25);
 }
 
 .toast-success {
   background: #dff0e2;
   color: #1f6b2a;
-  border: 1px solid rgba(53, 172, 70, 0.25);
+  border: 1px solid rgb(53 172 70 / 0.25);
 }
 
 .toast-info {
   background: #d6eaf6;
   color: #005e95;
-  border: 1px solid rgba(0, 121, 193, 0.25);
+  border: 1px solid rgb(0 121 193 / 0.25);
 }
 
-/* Ranking table column filters — left aligned for all three */
+/* Ranking column filters — left-aligned for all three selects */
 th.ranking-col-filter {
   text-transform: none;
   letter-spacing: 0;
@@ -226,8 +230,9 @@ th.ranking-col-filter {
 }
 
 .ranking-col-label select:focus {
-  outline: 2px solid color-mix(in oklab, var(--color-accent) 45%, transparent);
+  outline: 2px solid color-mix(in oklab, var(--color-accent) 35%, transparent);
   outline-offset: 1px;
+  border-color: var(--color-accent);
 }
 
 .ranking-group-field {
@@ -236,8 +241,6 @@ th.ranking-col-filter {
 
 .ranking-group-field span {
   font-size: 11px;
-  font-weight: 600;
-  color: var(--color-muted);
 }
 
 .section-head {
@@ -396,10 +399,15 @@ tr:hover td {
   font-size: 12px;
   font-weight: 600;
   cursor: pointer;
-  box-shadow: var(--shadow-sm);
 }
 
 .fab:hover {
   border-color: var(--color-accent);
   color: var(--color-accent);
+}
+
+@media (max-width: 1100px) {
+  .workspace {
+    grid-template-columns: minmax(0, 1fr) !important;
+  }
 }
