@@ -9,7 +9,7 @@ export const APP_CONFIG = {
   portalUrl: "https://dev.esribangladesh.com/portal",
   webmapId: "f5a07bf1c93346968dfdde7699ab43c8",
   /** Set a registered OAuth app id to enable IdentityManager. Leave blank for public web maps. */
-  oauthAppId: "",
+  oauthAppId: "68h4x8cVxR25yS14",
   title: "Insight Hub Dashboard",
   subtitle: "Bangladesh Administrative Intelligence",
   /** Optional kicker above the title; leave empty to hide. */
