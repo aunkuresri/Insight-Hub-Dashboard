@@ -324,13 +324,14 @@ export class MapController {
     view.ui.add(zoom, "bottom-left");
     view.ui.add(scaleBar, "bottom-right");
 
-    // Clear selection — same Esri widget style, under basemap expand (top-left stack)
-    this.clearSelectionBtn = this.createPanelToggleButton({
-      title: "Clear selection",
-      icon: "erase",
-      onClick: () => this.onClearSelection?.(),
-    });
-    this.clearSelectionBtn.classList.add("map-clear-selection-btn");
+    // Clear selection — icon-only, same Esri widget style as Basemap, directly below it
+    this.clearSelectionBtn = document.createElement("button");
+    this.clearSelectionBtn.type = "button";
+    this.clearSelectionBtn.className = "esri-widget esri-widget--button";
+    this.clearSelectionBtn.title = "Clear selection";
+    this.clearSelectionBtn.setAttribute("aria-label", "Clear selection");
+    this.clearSelectionBtn.innerHTML = `<calcite-icon icon="erase" scale="m"></calcite-icon>`;
+    this.clearSelectionBtn.addEventListener("click", () => this.onClearSelection?.());
     this.clearSelectionBtn.style.display = "none";
     view.ui.add(this.clearSelectionBtn, "top-left");
 
