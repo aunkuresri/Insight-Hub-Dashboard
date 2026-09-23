@@ -210,7 +210,7 @@ export class MapController {
         info,
       ]);
     }*/
-    if (config.oauthAppId && config.oauthAppId !== "68h4x8cVxR25yS14") {
+    if (config.oauthAppId && config.oauthAppId !== "YOUR_ENTERPRISE_APP_ID") {
     const [IdentityManagerMod, OAuthInfoMod] = await Promise.all([
       import("@arcgis/core/identity/IdentityManager.js"),
       import("@arcgis/core/identity/OAuthInfo.js"),
@@ -218,18 +218,19 @@ export class MapController {
     const IdentityManager = IdentityManagerMod.default as {
       registerOAuthInfos: (i: unknown[]) => void;
       checkSignInStatus: (url: string) => Promise<{ token?: string }>;
-      getCredential: (url: string, opts?: { oAuthPopupConfirmation?: boolean }) => Promise<{ token?: string }>;
+      getCredential: (url: string) => Promise<{ token?: string }>;
     };
     const OAuthInfo = OAuthInfoMod.default as new (p: unknown) => unknown;
   
-    const info = new OAuthInfo({
-      appId: config.oauthAppId,
-      portalUrl: config.portalUrl,
-      popup: false, // full-page redirect (safer with modals)
-    });
-    IdentityManager.registerOAuthInfos([info]);
+    IdentityManager.registerOAuthInfos([
+      new OAuthInfo({
+        appId: config.oauthAppId,
+        portalUrl: config.portalUrl,
+        popup: false,
+      }),
+    ]);
   
-    // Force portal login on app open if not already signed in
+    // Prompt portal login if not already signed in
     try {
       await IdentityManager.checkSignInStatus(config.portalUrl);
     } catch {
