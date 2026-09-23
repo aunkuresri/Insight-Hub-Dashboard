@@ -715,7 +715,7 @@ export function DataUpdateWindow() {
                     analytics). Click a group header to expand or collapse it.
                   </p>
                   {catalog.map((g) => (
-                    <details key={g.id} className="data-update-group-block" open>
+                    <details key={g.id} className="data-update-group-block">
                       <summary className="section-head data-update-group-toggle">
                         <h2>{g.label}</h2>
                         <span className="method-tag">{g.fields.length}</span>
@@ -754,7 +754,7 @@ export function DataUpdateWindow() {
                       )}
                     </details>
                   ))}
-                  <details className="data-update-group-block" open>
+                  <details className="data-update-group-block">
                     <summary className="section-head data-update-group-toggle">
                       <h2>Undefined Fields</h2>
                       <span className="method-tag">{undefinedFields.length}</span>
