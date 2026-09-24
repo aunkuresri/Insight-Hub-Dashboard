@@ -107,31 +107,46 @@
 .app-header {
   display: grid;
   grid-template-columns: 1fr auto;
-  gap: 16px;
+  gap: 12px;
   align-items: center;
   padding: 0 16px;
-  background: var(--color-header);
-  border-bottom: 1px solid var(--color-border);
-  min-height: var(--header-h);
+  background: #ffffff;
+  border-bottom: 1px solid rgb(0 0 0 / 0.1);
+  box-shadow:
+    0 1px 3px rgb(0 0 0 / 0.06),
+    0 4px 12px rgb(0 0 0 / 0.04);
+  z-index: 20;
+  position: relative;
 }
 
 .brand {
   display: flex;
   align-items: center;
-  gap: 12px;
+  gap: 10px;
   min-width: 0;
+}
+
+.brand-logo {
+  width: 36px;
+  height: 36px;
+  border-radius: 6px;
+  flex-shrink: 0;
+  object-fit: contain;
+  background: color-mix(in oklab, var(--color-accent) 12%, #e8f4fc);
+  padding: 4px;
+  box-sizing: border-box;
 }
 
 .brand-mark {
   width: 36px;
   height: 36px;
-  border-radius: var(--radius-md);
-  background: color-mix(in oklab, var(--color-accent) 12%, white);
+  border-radius: 6px;
   display: grid;
   place-items: center;
+  background: color-mix(in oklab, var(--color-accent) 18%, #dceef8);
   color: var(--color-accent);
+  flex-shrink: 0;
   border: 1px solid color-mix(in oklab, var(--color-accent) 22%, transparent);
-  box-shadow: 0 1px 3px rgb(0 121 193 / 0.15);
 }
 
 .brand-copy {
