@@ -5,6 +5,7 @@
 @import "./layout-v2.css";
 @import "./legend-kpi.css";
 @import "./auth-data-update.css";
+@import "./data-update-sticky.css";
 
 @theme {
   --font-sans: "IBM Plex Sans", "Segoe UI", system-ui, sans-serif;
