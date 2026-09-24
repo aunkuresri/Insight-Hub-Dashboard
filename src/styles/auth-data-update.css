@@ -1,1 +1,18 @@
-PLACEHOLDER_CSS
+/* Auth gate + header menu + data update */
+
+.auth-gate {
+  min-height: 100dvh;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  background: #f3f3f3;
+}
+
+.auth-card {
+  width: min(420px, 100%);
+  background: #fff;
+  border: 1px solid rgb(0 0 0 / 0.1);
+  border-radius: 8px;
+  padding: 24px;
+  box-shadow: 0 4px 16px rgb(0 0 0 / 0.08);
+}
