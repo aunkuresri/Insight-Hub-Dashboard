@@ -195,7 +195,9 @@ export function SymbologyPanel() {
             <p className="empty-note">Choose an indicator group to list its fields.</p>
           ) : null}
         </section>
+      </div>
 
+      <div className="left-panel-footer">
         <ColorSchemePicker
           value={scheme}
           onChange={setScheme}
