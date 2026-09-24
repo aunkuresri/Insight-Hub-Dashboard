@@ -29,18 +29,18 @@ export function RightPanel() {
 
       <div className="panel-scroll">
         <LegendPanel />
+      </div>
 
-        <div className="right-panel-actions">
-          <calcite-button
-            width="full"
-            kind="brand"
-            scale="s"
-            icon-start="analysis"
-            onClick={() => setAnalyticsWindowOpen(true)}
-          >
-            Indicator Analytics
-          </calcite-button>
-        </div>
+      <div className="right-panel-actions">
+        <calcite-button
+          width="full"
+          kind="brand"
+          scale="s"
+          icon-start="analysis"
+          onClick={() => setAnalyticsWindowOpen(true)}
+        >
+          Indicator Analytics
+        </calcite-button>
       </div>
     </aside>
   );
