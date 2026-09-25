@@ -409,7 +409,7 @@ export function DataUpdateWindow() {
           </div>
 
           {mainTab === "add" ? (
-            <>
+            <div className="data-update-scroll">
               <section>
                 <div className="section-head">
                   <h2>Indicator group</h2>
@@ -552,9 +552,9 @@ export function DataUpdateWindow() {
                   <span>{resultMessage}</span>
                 </div>
               ) : null}
-            </>
+            </div>
           ) : (
-            <>
+            <div className="data-update-scroll">
               <div className="data-update-subtabs" role="tablist" aria-label="Modify Data sections">
                 <button
                   type="button"
@@ -818,7 +818,7 @@ export function DataUpdateWindow() {
                   <span>{resultMessage}</span>
                 </div>
               ) : null}
-            </>
+            </div>
           )}
         </div>
 
