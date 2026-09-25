@@ -35,3 +35,13 @@
   overflow-y: auto;
   overflow-x: hidden;
 }
+
+/* Manage Data — Fields in group: fixed box height, scroll inside */
+.data-update-fields-check {
+  height: auto;
+  max-height: 200px;
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+  flex-shrink: 0;
+}
