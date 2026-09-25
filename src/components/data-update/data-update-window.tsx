@@ -526,17 +526,17 @@ export function DataUpdateWindow() {
                   <h2>CSV attachment</h2>
                 </div>
                 <label className="data-update-file">
+                  <calcite-button appearance="outline" kind="neutral" scale="s" icon-start="attachment">
+                    Choose CSV file...
+                  </calcite-button>
                   <input
                     type="file"
                     accept=".csv,.txt,text/csv"
                     disabled={busy}
                     onChange={(e) => void onFile(e.target.files?.[0] ?? null)}
                   />
-                  <span className="data-update-file-btn">
-                    <calcite-icon icon="attachment" scale="s" />
-                    {fileName || "Choose CSV file…"}
-                  </span>
                 </label>
+                {fileName ? <p className="section-hint">{fileName}</p> : null}
                 {fileInfo ? <p className="section-hint">{fileInfo}</p> : null}
               </section>
 
@@ -706,36 +706,38 @@ export function DataUpdateWindow() {
                     </details>
                   ))}
 
-                  <div className="section-head" style={{ marginTop: "1rem" }}>
-                    <h2>Undefined fields</h2>
-                    <span className="method-tag">{undefinedFields.length}</span>
-                  </div>
-                  {undefinedFields.length ? (
-                    <ul className="data-update-field-list" role="list">
-                      {undefinedFields.map((f) => (
-                        <li key={f.id} className="data-update-field-row" role="listitem">
-                          <span className="data-update-field-row-label">{f.label}</span>
-                          <select
-                            className="data-update-input data-update-input--sm"
-                            defaultValue=""
-                            aria-label={`Assign ${f.label} to group`}
-                            onChange={(e) => {
-                              if (e.target.value) assignUndefinedField(f, e.target.value);
-                            }}
-                          >
-                            <option value="">Assign to group…</option>
-                            {catalog.map((g) => (
-                              <option key={g.id} value={g.id}>
-                                {g.label}
-                              </option>
-                            ))}
-                          </select>
-                        </li>
-                      ))}
-                    </ul>
-                  ) : (
-                    <p className="empty-note">No unassigned numeric fields on the map layers.</p>
-                  )}
+                  <details className="data-update-group-block" style={{ marginTop: "1rem" }}>
+                    <summary className="section-head data-update-group-toggle">
+                      <h2>Undefined fields</h2>
+                      <span className="method-tag">{undefinedFields.length}</span>
+                    </summary>
+                    {undefinedFields.length ? (
+                      <ul className="data-update-field-list" role="list">
+                        {undefinedFields.map((f) => (
+                          <li key={f.id} className="data-update-field-row" role="listitem">
+                            <span className="data-update-field-row-label">{f.label}</span>
+                            <select
+                              className="data-update-input data-update-input--sm"
+                              defaultValue=""
+                              aria-label={`Assign ${f.label} to group`}
+                              onChange={(e) => {
+                                if (e.target.value) assignUndefinedField(f, e.target.value);
+                              }}
+                            >
+                              <option value="">Assign to group…</option>
+                              {catalog.map((g) => (
+                                <option key={g.id} value={g.id}>
+                                  {g.label}
+                                </option>
+                              ))}
+                            </select>
+                          </li>
+                        ))}
+                      </ul>
+                    ) : (
+                      <p className="empty-note">No unassigned numeric fields on the map layers.</p>
+                    )}
+                  </details>
                 </section>
               ) : null}
 
