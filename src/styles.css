@@ -1,3 +1,13 @@
 @import "./styles/styles-part-0.css";
 @import "./styles/styles-part-1.css";
 @import "./styles/styles-part-2.css";
+
+/* Indicator options list: fixed box, scroll inside */
+.check-list {
+  height: 200px;
+  max-height: 200px;
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+  flex-shrink: 0;
+}
