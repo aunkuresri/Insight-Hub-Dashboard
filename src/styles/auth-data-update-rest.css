@@ -243,7 +243,11 @@
 }
 
 .data-update-group-block {
-  margin-bottom: 10px;
+  margin: 0 0 4px;
+  border: 1px solid rgb(0 0 0 / 0.1);
+  border-radius: 4px;
+  background: #ffffff;
+  overflow: hidden;
 }
 
 .data-update-group-block:last-child {
@@ -269,11 +273,11 @@ details.data-update-group-block > summary.data-update-group-toggle {
   justify-content: flex-start;
   gap: 8px;
   width: 100%;
-  margin: 0 0 8px;
-  padding: 6px 4px;
+  margin: 0;
+  padding: 8px 10px;
   border: 0;
-  border-radius: 4px;
-  background: transparent;
+  border-radius: 0;
+  background: #ffffff;
   cursor: pointer;
   list-style: none;
   font: inherit;
@@ -317,4 +321,11 @@ details.data-update-group-block > summary.data-update-group-toggle h2 {
 
 details.data-update-group-block > summary.data-update-group-toggle .method-tag {
   margin-left: auto;
+}
+
+details.data-update-group-block > .data-update-field-list,
+details.data-update-group-block > .empty-note {
+  margin: 0;
+  padding: 4px 8px 8px;
+  border-top: 1px solid rgb(0 0 0 / 0.08);
 }
