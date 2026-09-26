@@ -12,12 +12,13 @@ Built with **ArcGIS Maps SDK for JavaScript**, **Calcite Design System**, and a 
 
 | Area | Capabilities |
 |------|----------------|
-| **Header** | Branding (Insight Hub Platform); hierarchical **location filters** (Division → District → Upazila → Union/Ward) with single-click selection; **Add Data** (CSV attribute update); optional auth |
-| **Left panel – Smart Symbology** | Indicator groups & fields; color schemes; layer group (**Boundary** / **Chart**); independent **Scale** settings per group; Apply / Reset |
+| **Header** | Branding (Insight Hub Platform); hierarchical **location filters** (Division → District → Upazila → Union/Ward) with single-click selection; **Manage Data** entry; optional auth |
+| **Left panel – Smart Symbology** | Indicator groups & fields (scrollable checklist); color schemes; layer group (**Boundary** / **Chart**); independent **Scale** settings per group; Apply / Reset pinned in panel footer |
 | **Map** | ArcGIS web map; zoom-driven admin level visibility; boundary popups; Map KPI bar; smart symbology legend |
 | **Right panel – Legends** | Applied boundary / chart symbology legends |
 | **Analytics window** | KPI cards, composition charts, ranking table (row click → highlight / zoom), map preview that follows filters |
-| **Data update** | CSV upload to feature layers (Append or Append and Replace) by admin level and selected indicator fields |
+| **Manage Data – Add Data** | Select indicator group & fields; Append or Replace mode; CSV attachment (Calcite button); join always at **Union / Ward** level (not user-selectable) |
+| **Manage Data – Modify Data** | **Add Field** (create attribute on layers + catalog); **Modify Field** (move/remove fields, assign undefined fields; collapsible group rows); **Modify Group** (create / remove indicator groups) |
 
 **Indicator groups:** Incident · Demography · Socio-Economic · Point of Interest
 
@@ -48,6 +49,7 @@ Built with **ArcGIS Maps SDK for JavaScript**, **Calcite Design System**, and a 
 - **Node.js** 20+ (LTS recommended)
 - **npm** 10+ (comes with Node)
 - Network access to the ArcGIS portal / feature services used by the web map
+- Edit privileges on hosted feature services when using **Manage Data** (add field / CSV apply)
 
 ---
 
@@ -77,7 +79,7 @@ npm run preview   # optional local preview of the build
 | Command | Description |
 |---------|-------------|
 | `npm run dev` | Vite dev server on port **8080** |
-| `npm run build` | Production build |
+| `npm run build` | Production build (+ DB migrate step if configured) |
 | `npm run preview` | Preview production build |
 | `npm run typecheck` | TypeScript check |
 | `npm run lint` | ESLint |
@@ -115,21 +117,45 @@ export const APP_CONFIG = {
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
-│  Header: Brand · Location filters · Add Data                │
+│  Header: Brand · Location filters · Manage Data             │
 ├──────────────┬──────────────────────────────┬───────────────┤
 │ Smart        │  Map KPI bar                 │  Legends      │
 │ Symbology    │  Map (web map + tools)       │  (right)      │
 │ (left)       │  Smart legend portal         │               │
 └──────────────┴──────────────────────────────┴───────────────┘
-     Analytics window (overlay) · Data update modal (overlay)
+     Analytics window (overlay) · Manage Data modal (overlay)
 ```
 
-1. **Header** – Title/subtitle, cascading location filters, Add Data.
+1. **Header** – Title/subtitle, cascading location filters, Manage Data.
 2. **Left panel** – Smart Symbology (fields, scheme, Scale gear, Boundary/Chart, Apply/Reset).
 3. **Map** – Web map, extent/filter sync, KPI strip, legend.
 4. **Right panel** – Applied symbology legends.
 5. **Analytics window** – KPIs, charts, ranking, map preview.
-6. **Data update** – CSV → feature attributes (Append / Append and Replace).
+6. **Manage Data** – Add Data (CSV) and Modify Data (fields / groups / catalog).
+
+---
+
+## Manage Data
+
+Modal with two main tabs:
+
+### Add Data
+
+- Choose **indicator group** and **fields** (scrollable checklist).
+- **Update mode:** Append or Replace.
+- **CSV attachment** via Calcite outline button.
+- Attribute join always uses **Union / Ward** level (hard-coded; admin-level chips are not shown).
+- Scrollable body; footer actions stay fixed.
+
+### Modify Data
+
+| Sub-tab | Purpose |
+|---------|---------|
+| **Add Field** | Create a numeric/string column on Boundary & Chart layers and register it in the dashboard catalog |
+| **Modify Field** | Expand/collapse group rows (boxed style); move or remove fields; assign **Undefined fields** from the map schema |
+| **Modify Group** | Create a new indicator group or remove an existing one |
+
+Catalog changes persist in `localStorage` (`insight-hub-indicator-catalog-v1`) and drive Smart Symbology / analytics field pickers.
 
 ---
 
@@ -205,7 +231,7 @@ sequenceDiagram
 src/
   components/
     analytics/     # KPIs, charts, ranking, analytics window, map preview
-    data-update/   # CSV attribute update modal
+    data-update/   # Manage Data modal (Add Data + Modify Data)
     filters/       # Location filters (header + panel variants)
     layout/        # Header, workbench, right panel
     map/           # Map pane, toolbar, legend portal
@@ -213,8 +239,9 @@ src/
   config/          # app-config, indicators, layers, symbology-schemes
   lib/gis/         # Map controller, field resolve, queries
   lib/symbology/   # Boundary / chart renderers
-  lib/data-update/ # CSV parse + apply updates
+  lib/data-update/ # CSV parse + apply updates; add layer field
   store/           # app-store, ui-store
+  styles/          # auth-data-update, sticky scroll, layout parts
   styles.css       # Calcite-aligned layout styles
   header-filters.css
 ```
@@ -229,6 +256,9 @@ src/
 - **Scale** (gear in Smart Symbology) is independent for Boundary and Chart; Apply uses Scale only for the active layer group.
 - Boundary and Chart keep **separate selected field lists** (`symFieldsByGroup`).
 - Location filters use **single-click** selection; analytics map preview zooms on filter change like the main map.
+- Smart Symbology indicator checklist uses a fixed-height scroll area so the panel footer (color scheme / Apply) stays visible.
+- Manage Data uses `.data-update-scroll` inside the modal body so Add/Modify content scrolls while header and footer stay fixed.
+- Modify Field group rows use a compact boxed style with equal gaps; **Undefined fields** is collapsed by default like other groups.
 
 ---
 
