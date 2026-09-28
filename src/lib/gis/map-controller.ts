@@ -946,6 +946,8 @@ export class MapController {
       returnGeometry?: boolean;
       returnDistinctValues?: boolean;
       geometry?: unknown | null;
+      /** Simplify geometries (map units). Speeds chart placement queries a lot. */
+      maxAllowableOffset?: number;
     } = {},
   ): Promise<EsriFeature[]> {
     const where = options.where || layer.definitionExpression || "1=1";
@@ -960,6 +962,9 @@ export class MapController {
     if (options.geometry) {
       query.geometry = options.geometry;
       query.spatialRelationship = "intersects";
+    }
+    if (options.maxAllowableOffset != null && options.maxAllowableOffset > 0) {
+      query.maxAllowableOffset = options.maxAllowableOffset;
     }
     const result = await layer.queryFeatures(query);
     return result.features ?? [];
@@ -1242,18 +1247,23 @@ export class MapController {
       }
     }
 
+    const oidField = layer.objectIdField || "OBJECTID";
     const where = layer.definitionExpression || "1=1";
+    // Only need the name key for grouping; values come from the joined rows.
+    // Simplified geometries + extent.center → fast multipart chart placement.
     const features = await this.queryAttributes(layer, {
       where,
-      outFields: ["*"],
+      outFields: [keyField, "adm1_en", "adm2_en", "adm3_en", "adm4_en", "Unit", "Custom_Unit_Code", oidField].filter(
+        (v, i, a) => Boolean(v) && a.indexOf(v) === i,
+      ),
       returnGeometry: true,
       num: 50_000,
+      // Coarse simplification: we only use extent centers, not ring detail.
+      maxAllowableOffset: 500,
     });
 
-    const oidField = layer.objectIdField || "OBJECTID";
     // One chart per administrative unit — collect ALL polygon parts, then
-    // place the chart on the largest part (labelPoint / centroid). Avoids slow
-    // multipart union while still centering on the main body of the unit.
+    // place the chart at the largest part's extent center (no geometryEngine).
     const byName = new Map<
       string,
       { name: string; geometries: unknown[]; attrs: Record<string, unknown> }
@@ -1277,108 +1287,57 @@ export class MapController {
       }
     }
 
-    // geometryEngine helpers for chart placement.
-    // Multipart admin units are common (islands / disconnected polygons). Full
-    // union of every part is very slow — instead pick the largest part and use
-    // labelPoint (inside the polygon) or centroid. Same visual placement for
-    // charts without the union cost.
-    let toLabelPoint: ((g: unknown) => unknown) | null = null;
-    let toCentroid: ((g: unknown) => unknown) | null = null;
-    let planarArea: ((g: unknown) => number) | null = null;
-    try {
-      const geMod = await import("@arcgis/core/geometry/geometryEngine.js");
-      const ge = geMod as {
-        labelPoints?: (gs: unknown[]) => unknown[];
-        labelPoint?: (g: unknown) => unknown;
-        centroid?: (g: unknown) => unknown;
-        planarArea?: (g: unknown) => number;
-        geodesicArea?: (g: unknown, unit?: string) => number;
-        default?: {
-          labelPoints?: (gs: unknown[]) => unknown[];
-          labelPoint?: (g: unknown) => unknown;
-          centroid?: (g: unknown) => unknown;
-          planarArea?: (g: unknown) => number;
-          geodesicArea?: (g: unknown, unit?: string) => number;
+    // Fast chart location for multipart admin units:
+    // use each part's extent center and keep the part with the largest extent.
+    // No geometryEngine.union / centroid / labelPoint (those were the lag).
+    const extentCenter = (g: unknown): unknown | null => {
+      const geom = g as {
+        extent?: {
+          center?: unknown;
+          xmin?: number;
+          xmax?: number;
+          ymin?: number;
+          ymax?: number;
+          spatialReference?: unknown;
         };
-      };
-      toLabelPoint =
-        ge.labelPoint ??
-        ge.default?.labelPoint ??
-        ((g: unknown) => {
-          const fn = ge.labelPoints ?? ge.default?.labelPoints;
-          if (!fn) return null;
-          const pts = fn([g]);
-          return pts?.[0] ?? null;
-        });
-      toCentroid = ge.centroid ?? ge.default?.centroid ?? null;
-      planarArea =
-        ge.planarArea ??
-        ge.default?.planarArea ??
-        ((g: unknown) => {
-          const fn = ge.geodesicArea ?? ge.default?.geodesicArea;
-          if (!fn) return 0;
-          try {
-            return Math.abs(fn(g, "square-meters"));
-          } catch {
-            return 0;
-          }
-        });
-    } catch {
-      toLabelPoint = null;
-      toCentroid = null;
-      planarArea = null;
-    }
+        spatialReference?: unknown;
+        type?: string;
+      } | null;
+      if (!geom) return null;
+      const ext = geom.extent;
+      if (ext?.center) return ext.center;
+      if (
+        ext &&
+        typeof ext.xmin === "number" &&
+        typeof ext.xmax === "number" &&
+        typeof ext.ymin === "number" &&
+        typeof ext.ymax === "number"
+      ) {
+        return {
+          type: "point",
+          x: (ext.xmin + ext.xmax) / 2,
+          y: (ext.ymin + ext.ymax) / 2,
+          spatialReference: ext.spatialReference ?? geom.spatialReference,
+        };
+      }
+      return null;
+    };
 
-    /** Fast area proxy when planarArea is unavailable (extent width × height). */
     const extentArea = (g: unknown): number => {
-      const ext = (g as { extent?: { width?: number; height?: number } } | null)?.extent;
-      if (ext && typeof ext.width === "number" && typeof ext.height === "number") {
+      const ext = (g as { extent?: { width?: number; height?: number; xmin?: number; xmax?: number; ymin?: number; ymax?: number } } | null)?.extent;
+      if (!ext) return 0;
+      if (typeof ext.width === "number" && typeof ext.height === "number") {
         return Math.abs(ext.width * ext.height);
       }
+      if (
+        typeof ext.xmin === "number" &&
+        typeof ext.xmax === "number" &&
+        typeof ext.ymin === "number" &&
+        typeof ext.ymax === "number"
+      ) {
+        return Math.abs((ext.xmax - ext.xmin) * (ext.ymax - ext.ymin));
+      }
       return 0;
-    };
-
-    const pickLargest = (geoms: unknown[]): unknown => {
-      if (geoms.length === 1) return geoms[0];
-      let best = geoms[0];
-      let bestArea = -1;
-      for (const g of geoms) {
-        let a = 0;
-        if (planarArea) {
-          try {
-            a = Math.abs(planarArea(g));
-          } catch {
-            a = extentArea(g);
-          }
-        } else {
-          a = extentArea(g);
-        }
-        if (a > bestArea) {
-          bestArea = a;
-          best = g;
-        }
-      }
-      return best;
-    };
-
-    const pointFor = (g: unknown): unknown => {
-      if (toLabelPoint) {
-        try {
-          const p = toLabelPoint(g);
-          if (p) return p;
-        } catch {
-          /* fall through */
-        }
-      }
-      if (toCentroid) {
-        try {
-          const c = toCentroid(g);
-          if (c) return c;
-        } catch {
-          /* fall through */
-        }
-      }
-      return g;
     };
 
     const graphics: unknown[] = [];
@@ -1411,9 +1370,17 @@ export class MapController {
       });
       if (!hasData) continue;
 
-      // Place chart on the largest part only (no multipart union — that was the lag).
-      const mainPart = pickLargest(geometries);
-      const geom = pointFor(mainPart);
+      // Largest part by extent area → extent center (one point per admin unit).
+      let bestGeom: unknown = geometries[0];
+      let bestArea = -1;
+      for (const g of geometries) {
+        const a = extentArea(g);
+        if (a > bestArea) {
+          bestArea = a;
+          bestGeom = g;
+        }
+      }
+      const geom = extentCenter(bestGeom) ?? bestGeom;
 
       graphics.push({
         geometry: geom,
