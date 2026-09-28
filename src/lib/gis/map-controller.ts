@@ -42,6 +42,8 @@ type EsriWebMap = {
   load: () => Promise<unknown>;
   allLayers: { toArray: () => EsriLayer[] };
   layers: { toArray: () => EsriLayer[] };
+  /** Standalone hosted tables (CSV / table items) — not in allLayers. */
+  tables?: { toArray: () => EsriLayer[] };
   destroy?: () => void;
 };
 
@@ -200,6 +202,12 @@ export class MapController {
     visible: boolean;
   } | null = null;
 
+  /** Client-side FeatureLayers with joined indicator attrs for pie charts. */
+  private joinedChartLayers = new Map<
+    string,
+    { layer: EsriLayer; originalId: string; originalVisible: boolean }
+  >();
+
   private initialViewpoint: unknown = null;
   private handles: Array<{ remove: () => void }> = [];
   private highlightHandle: { remove: () => void } | null = null;
@@ -344,7 +352,7 @@ export class MapController {
     this.clearSelectionBtn.className = "esri-widget esri-widget--button";
     this.clearSelectionBtn.title = "Clear selection";
     this.clearSelectionBtn.setAttribute("aria-label", "Clear selection");
-    this.clearSelectionBtn.innerHTML = `<calcite-icon icon="erase" scale="m"></calcite-icon>`;
+    this.clearSelectionBtn.innerHTML = `<calcite-icon icon="reset" scale="m"></calcite-icon>`;
     this.clearSelectionBtn.addEventListener("click", () => this.onClearSelection?.());
     this.clearSelectionBtn.style.display = "none";
     view.ui.add(this.clearSelectionBtn, "top-left");
@@ -462,9 +470,49 @@ export class MapController {
     return this.webmap.allLayers.toArray().filter((layer) => layer.type === "feature");
   }
 
+  /** Geometry feature layers + standalone tables (hosted CSV tables live here). */
+  allDataLayers(): EsriLayer[] {
+    if (!this.webmap) return [];
+    const byId = new Map<string, EsriLayer>();
+    for (const layer of this.webmap.allLayers.toArray()) {
+      if (layer.type === "feature" || layer.type === "table") {
+        byId.set(layer.id || layer.title || String(byId.size), layer);
+      }
+    }
+    try {
+      const tables = this.webmap.tables?.toArray?.() ?? [];
+      for (const layer of tables) {
+        byId.set(layer.id || layer.title || String(byId.size), layer);
+      }
+    } catch {
+      /* tables collection optional */
+    }
+    return Array.from(byId.values());
+  }
+
   findLayer(title: string): EsriLayer | null {
     const wanted = title.trim().toLowerCase();
-    return this.featureLayers().find((layer) => (layer.title || "").trim().toLowerCase() === wanted) ?? null;
+    const norm = (s: string) =>
+      s
+        .trim()
+        .toLowerCase()
+        .replace(/\.csv$/i, "")
+        .replace(/[\s_\-]+/g, "");
+    const wantedNorm = norm(wanted);
+    const layers = this.allDataLayers();
+    const exact = layers.find((layer) => (layer.title || "").trim().toLowerCase() === wanted);
+    if (exact) return exact;
+    // with/without .csv
+    const alt = wanted.endsWith(".csv") ? wanted.slice(0, -4) : `${wanted}.csv`;
+    const altHit = layers.find((layer) => (layer.title || "").trim().toLowerCase() === alt);
+    if (altHit) return altHit;
+    const byNorm = layers.find((layer) => norm(layer.title || "") === wantedNorm);
+    if (byNorm) return byNorm;
+    const soft = layers.find((layer) => {
+      const t = (layer.title || "").trim().toLowerCase();
+      return t.includes(wanted) || wanted.includes(t);
+    });
+    return soft ?? null;
   }
 
   layersFor(group: LayerGroupId, levelId: AdminLevelId | "all"): EsriLayer[] {
@@ -481,22 +529,137 @@ export class MapController {
     return toFieldInfoFromEsri(layer.fields ?? []);
   }
 
-  async applyFilters(filters: LocationFilters): Promise<void> {
-    for (const level of ADMIN_LEVELS) {
-      const where = whereForLevel(level, filters) || "1=1";
-      const expression = where === "1=1" ? "1=1" : where;
+  /**
+   * Apply admin + Unit filters to all boundary/chart layers.
+   * Unit is applied when the layer has a Unit field; otherwise names matching
+   * that Unit are loaded from the hosted admin table and used in an IN clause.
+   */
+  async applyFilters(filters: LocationFilters, unit?: string | null): Promise<void> {
+    const unitTrim = unit?.trim() || null;
+    // Deepest selected admin filter (union > upazila > district > division).
+    // Coarser boundary/chart layers are hidden so e.g. selecting a Union does not
+    // leave the full Upazila polygon visible underneath.
+    const levelOrder = ADMIN_LEVELS.map((l) => l.id);
+    const deepestIdx = [...levelOrder]
+      .map((id, i) => (filters[id] ? i : -1))
+      .filter((i) => i >= 0)
+      .reduce((a, b) => Math.max(a, b), -1);
+
+    // Pre-load name lists per level when Unit is set but may not exist on geometry.
+    const namesByLevel = new Map<string, string[]>();
+    if (unitTrim) {
+      for (const level of ADMIN_LEVELS) {
+        try {
+          const names = await this.namesForUnitOnLevel(level, unitTrim, filters);
+          if (names.length) namesByLevel.set(level.id, names);
+        } catch {
+          /* table optional */
+        }
+      }
+    }
+
+    for (let li = 0; li < ADMIN_LEVELS.length; li++) {
+      const level = ADMIN_LEVELS[li]!;
+      // Hide coarser levels when a finer filter is active (e.g. hide Upazila when Union is set).
+      const hideCoarser = deepestIdx >= 0 && li < deepestIdx;
+
       for (const group of ["boundary", "chart"] as LayerGroupId[]) {
         const layer = this.findLayer(level.layerTitles[group]);
         if (!layer) continue;
+
+        let expression: string;
+        if (hideCoarser) {
+          expression = "1=0";
+        } else {
+          const schema = this.schemaOf(layer);
+          const hasUnit = schema.some((f) => f.name.toLowerCase() === "unit");
+          expression = whereForLevel(level, filters, hasUnit ? unitTrim : null) || "1=1";
+          if (unitTrim && !hasUnit) {
+            const names = namesByLevel.get(level.id) ?? [];
+            if (names.length) {
+              const nameField = level.nameField;
+              const inList = names
+                .map((n) => `'${n.replaceAll("'", "''")}'`)
+                .join(",");
+              const nameClause = `${nameField} IN (${inList})`;
+              expression =
+                expression && expression !== "1=1"
+                  ? `(${expression}) AND (${nameClause})`
+                  : nameClause;
+            }
+          }
+          if (!expression) expression = "1=1";
+        }
+
         layer.definitionExpression = expression;
         try {
           (layer as { refresh?: () => void }).refresh?.();
         } catch {
           /* optional */
         }
+
+        // Client-side joined chart layers must follow the same filter
+        const joined = this.joinedChartLayers.get(layer.id);
+        if (joined?.layer) {
+          const jl = joined.layer as EsriLayer & {
+            definitionExpression?: string;
+            refresh?: () => void;
+          };
+          jl.definitionExpression = expression;
+          try {
+            jl.refresh?.();
+          } catch {
+            /* optional */
+          }
+          // Hide joined chart when parent chart is hidden (coarser level)
+          if (hideCoarser) {
+            jl.visible = false;
+          } else {
+            jl.visible = true;
+          }
+        }
       }
     }
-    await this.zoomToFilters(filters);
+    await this.zoomToFilters(filters, unitTrim);
+  }
+
+  /** Admin feature names at a level that belong to the given Unit (from hosted table). */
+  private async namesForUnitOnLevel(
+    level: (typeof ADMIN_LEVELS)[number],
+    unit: string,
+    filters: LocationFilters,
+  ): Promise<string[]> {
+    const table = this.findLayer(level.tableTitle);
+    if (!table) return [];
+    const unitEsc = unit.replaceAll("'", "''");
+    const clauses = [`Unit = '${unitEsc}'`];
+    if (filters.division && level.id !== "division") {
+      clauses.push(`adm1_en = '${filters.division.replaceAll("'", "''")}'`);
+    }
+    if (filters.district && (level.id === "upazila" || level.id === "union")) {
+      clauses.push(`adm2_en = '${filters.district.replaceAll("'", "''")}'`);
+    }
+    if (filters.upazila && level.id === "union") {
+      clauses.push(`adm3_en = '${filters.upazila.replaceAll("'", "''")}'`);
+    }
+    const where = clauses.join(" AND ");
+    try {
+      const features = await this.queryAttributes(table, {
+        where,
+        outFields: [level.nameField],
+        returnGeometry: false,
+        returnDistinctValues: true,
+        num: 5000,
+      });
+      const names = new Set<string>();
+      for (const f of features) {
+        const v = f.attributes?.[level.nameField];
+        if (v != null && String(v).trim()) names.add(String(v).trim());
+      }
+      return Array.from(names);
+    } catch {
+      return [];
+    }
   }
 
   async applyEdits(
@@ -705,16 +868,24 @@ export class MapController {
     return typeof ext.clone === "function" ? ext.clone() : this.view.extent;
   }
 
-  async zoomToFilters(filters: LocationFilters): Promise<void> {
+  async zoomToFilters(filters: LocationFilters, unit?: string | null): Promise<void> {
     if (!this.view) return;
+    // Prefer deepest admin selection; if only Unit is set, zoom on District layer by Unit.
     const deepest = [...ADMIN_LEVELS].reverse().find((level) => filters[level.id]);
-    if (!deepest) {
+    if (!deepest && !(unit && unit.trim())) {
       await this.resetExtent();
       return;
     }
-    const layer = this.findLayer(deepest.layerTitles.boundary);
+    const targetLevel = deepest ?? ADMIN_LEVELS.find((l) => l.id === "district") ?? ADMIN_LEVELS[0]!;
+    const layer = this.findLayer(targetLevel.layerTitles.boundary);
     if (!layer) return;
-    const where = whereForLevel(deepest, filters) || "1=1";
+    let where = whereForLevel(targetLevel, filters, unit) || "1=1";
+    const schema = this.schemaOf(layer);
+    const hasUnit = schema.some((f) => f.name.toLowerCase() === "unit");
+    if (unit && unit.trim() && !hasUnit) {
+      where = whereForLevel(targetLevel, filters, null) || "1=1";
+    }
+    if (!where) where = "1=1";
     try {
       const result = await layer.queryExtent({ where, returnGeometry: true });
       if (result.count > 0 && result.extent) {
@@ -981,6 +1152,307 @@ export class MapController {
     }
   }
 
+  /** Remove client-side joined chart layers and restore original chart visibility. */
+  clearJoinedChartLayers(): void {
+    if (!this.webmap) {
+      this.joinedChartLayers.clear();
+      return;
+    }
+    for (const [, entry] of this.joinedChartLayers) {
+      try {
+        (this.webmap.layers as { remove?: (l: unknown) => void }).remove?.(entry.layer);
+      } catch {
+        /* ignore */
+      }
+      try {
+        const orig = this.findLayerById(entry.originalId);
+        if (orig) orig.visible = entry.originalVisible;
+      } catch {
+        /* ignore */
+      }
+    }
+    this.joinedChartLayers.clear();
+  }
+
+  private findLayerById(id: string): EsriLayer | null {
+    if (!this.webmap) return null;
+    for (const layer of this.featureLayers()) {
+      if (layer.id === id) return layer;
+    }
+    return null;
+  }
+
+  /**
+   * Apply a pie-chart (or any) renderer using joined table values.
+   * Builds a client-side FeatureLayer so attributes exist on features.
+   */
+  async applyJoinedChartRenderer(options: {
+    layer: EsriLayer;
+    rendererJson: EsriRenderer;
+    rows: Array<Record<string, unknown>>;
+    keyField: string;
+    valueFields: string[];
+  }): Promise<void> {
+    if (!this.modules || !this.webmap) return;
+    const { layer, rendererJson, rows, keyField, valueFields } = options;
+
+    // Index joined rows by admin name (+ Unit / Custom_Unit_Code fallbacks)
+    // Normalize Barishal/Barisal etc. so geometry names match table names.
+    const normPlace = (value: unknown): string => {
+      let s = String(value ?? "").trim().toLowerCase().replace(/\s+/g, " ");
+      s = s.replace(/\bbarishal\b/g, "barisal");
+      s = s.replace(/\bchattogram\b/g, "chittagong");
+      s = s.replace(/\bbogura\b/g, "bogra");
+      s = s.replace(/\bjashore\b/g, "jessore");
+      s = s.replace(/\bcumilla\b/g, "comilla");
+      return s;
+    };
+    const byKey = new Map<string, Record<string, unknown>>();
+    const addKey = (k: string, row: Record<string, unknown>) => {
+      const nk = normPlace(k);
+      if (!nk) return;
+      const prev = byKey.get(nk);
+      if (!prev) {
+        byKey.set(nk, row);
+        return;
+      }
+      // Sum numeric fields when multiple rows share a key
+      const merged = { ...prev };
+      for (const [fk, fv] of Object.entries(row)) {
+        const n = Number(fv);
+        if (Number.isFinite(n) && typeof prev[fk] !== "string") {
+          const pn = Number(prev[fk]);
+          merged[fk] = (Number.isFinite(pn) ? pn : 0) + n;
+        }
+      }
+      byKey.set(nk, merged);
+    };
+    for (const row of rows) {
+      for (const [k, v] of Object.entries(row)) {
+        if (k.toLowerCase() === keyField.toLowerCase()) {
+          addKey(String(v ?? ""), row);
+        }
+      }
+      for (const alt of ["adm1_en", "adm2_en", "adm3_en", "adm4_en", "Unit", "Custom_Unit_Code"]) {
+        for (const [k, v] of Object.entries(row)) {
+          if (k.toLowerCase() === alt.toLowerCase()) {
+            addKey(String(v ?? ""), row);
+          }
+        }
+      }
+    }
+
+    const where = layer.definitionExpression || "1=1";
+    const features = await this.queryAttributes(layer, {
+      where,
+      outFields: ["*"],
+      returnGeometry: true,
+      num: 50_000,
+    });
+
+    const oidField = layer.objectIdField || "OBJECTID";
+    // One chart per administrative unit — collect ALL polygon parts, then
+    // place the chart at the centroid of the union (true center of the unit).
+    const byName = new Map<
+      string,
+      { name: string; geometries: unknown[]; attrs: Record<string, unknown> }
+    >();
+    for (const f of features) {
+      const attrs = { ...(f.attributes ?? {}) };
+      let name = "";
+      for (const [k, v] of Object.entries(attrs)) {
+        if (k.toLowerCase() === keyField.toLowerCase()) {
+          name = String(v ?? "").trim();
+          break;
+        }
+      }
+      if (!name || !f.geometry) continue;
+      const nk = normPlace(name);
+      const entry = byName.get(nk);
+      if (entry) {
+        entry.geometries.push(f.geometry);
+      } else {
+        byName.set(nk, { name, geometries: [f.geometry], attrs });
+      }
+    }
+
+    // geometryEngine: union all parts → centroid of the whole unit
+    let unionGeoms: ((gs: unknown[]) => unknown) | null = null;
+    let toCentroid: ((g: unknown) => unknown) | null = null;
+    try {
+      const geMod = await import("@arcgis/core/geometry/geometryEngine.js");
+      const ge = geMod as {
+        union?: (gs: unknown[]) => unknown;
+        centroid?: (g: unknown) => unknown;
+        default?: {
+          union?: (gs: unknown[]) => unknown;
+          centroid?: (g: unknown) => unknown;
+        };
+      };
+      unionGeoms = ge.union ?? ge.default?.union ?? null;
+      toCentroid = ge.centroid ?? ge.default?.centroid ?? null;
+    } catch {
+      unionGeoms = null;
+      toCentroid = null;
+    }
+
+    const graphics: unknown[] = [];
+    let oid = 1;
+    for (const { name, geometries, attrs } of byName.values()) {
+      const hit = byKey.get(normPlace(name));
+      const merged: Record<string, unknown> = { ...attrs, [oidField]: oid++ };
+      for (const vf of valueFields) {
+        let val: unknown = 0;
+        if (hit) {
+          if (vf in hit) val = hit[vf];
+          else {
+            for (const [k, v] of Object.entries(hit)) {
+              if (k.toLowerCase() === vf.toLowerCase()) {
+                val = v;
+                break;
+              }
+            }
+          }
+        }
+        const n = Number(val);
+        merged[vf] = Number.isFinite(n) ? n : 0;
+      }
+      merged[keyField] = name;
+
+      // Skip empty pies (no joined data) — avoids blank circles for unmatched units
+      const hasData = valueFields.some((vf) => {
+        const n = Number(merged[vf]);
+        return Number.isFinite(n) && n > 0;
+      });
+      if (!hasData) continue;
+
+      // Union all parts for this admin unit, then centroid
+      let geom: unknown = geometries[0];
+      try {
+        let combined: unknown = geometries[0];
+        if (geometries.length > 1 && unionGeoms) {
+          const u = unionGeoms(geometries);
+          if (u) combined = u;
+        }
+        if (toCentroid && combined) {
+          const c = toCentroid(combined);
+          if (c) geom = c;
+        } else if (combined) {
+          geom = combined;
+        }
+      } catch {
+        // Fall back: centroid of first part only
+        if (toCentroid && geometries[0]) {
+          try {
+            const c = toCentroid(geometries[0]);
+            if (c) geom = c;
+          } catch {
+            geom = geometries[0];
+          }
+        }
+      }
+
+      graphics.push({
+        geometry: geom,
+        attributes: merged,
+      });
+    }
+
+    // Remove previous joined layer for this source
+    const prev = this.joinedChartLayers.get(layer.id);
+    if (prev) {
+      try {
+        (this.webmap.layers as { remove?: (l: unknown) => void }).remove?.(prev.layer);
+      } catch {
+        /* ignore */
+      }
+      this.joinedChartLayers.delete(layer.id);
+    }
+
+    const FeatureLayerMod = await import("@arcgis/core/layers/FeatureLayer.js");
+    const FeatureLayer = (FeatureLayerMod as { default: new (p: unknown) => EsriLayer }).default;
+
+    const fields: Array<{ name: string; type: string; alias?: string }> = [
+      { name: oidField, type: "oid" },
+      { name: keyField, type: "string" },
+    ];
+    for (const vf of valueFields) {
+      fields.push({ name: vf, type: "double", alias: vf });
+    }
+    // Keep common admin fields if present
+    for (const af of ["adm1_en", "adm2_en", "adm3_en", "adm4_en", "Unit", "Custom_Unit_Code"]) {
+      if (!fields.some((f) => f.name === af)) {
+        fields.push({ name: af, type: "string" });
+      }
+    }
+
+    // Centroid conversion yields points; fall back to source layer type.
+    const sampleGeom = (graphics[0] as { geometry?: { type?: string } } | undefined)?.geometry;
+    const geomType =
+      (sampleGeom?.type === "point" ? "point" : null) ||
+      (layer as { geometryType?: string }).geometryType ||
+      (features[0]?.geometry as { type?: string } | undefined)?.type ||
+      "polygon";
+
+    // Scale dependency: prefer web-map layer values, else ADMIN_LEVELS ranges
+    // (Division / District / Upazila / Union Chart must not all show at once).
+    const titleLower = (layer.title || "").trim().toLowerCase();
+    const levelMatch = ADMIN_LEVELS.find(
+      (l) =>
+        l.layerTitles.chart.toLowerCase() === titleLower ||
+        l.layerTitles.boundary.toLowerCase() === titleLower ||
+        titleLower.includes(l.id),
+    );
+    let minScale = Number(layer.minScale);
+    let maxScale = Number(layer.maxScale);
+    if (!Number.isFinite(minScale) || minScale < 0) minScale = 0;
+    if (!Number.isFinite(maxScale) || maxScale < 0) maxScale = 0;
+    // If the layer reports "always visible" (0/0) but we know admin scale ranges, use those.
+    if (minScale === 0 && maxScale === 0 && levelMatch) {
+      minScale = levelMatch.minScale;
+      maxScale = levelMatch.maxScale;
+    }
+
+    const renderer = this.modules.jsonUtils.fromJSON(rendererJson);
+    const client = new FeatureLayer({
+      source: graphics,
+      objectIdField: oidField,
+      fields,
+      geometryType: geomType === "point" || geomType === "polygon" || geomType === "polyline" ? geomType : "polygon",
+      spatialReference: (features[0]?.geometry as { spatialReference?: unknown } | undefined)?.spatialReference,
+      renderer,
+      title: `${layer.title || "Chart"} (data)`,
+      listMode: "hide",
+      popupEnabled: true,
+      outFields: ["*"],
+      opacity: layer.opacity ?? 1,
+      minScale,
+      maxScale,
+    }) as EsriLayer & { minScale?: number; maxScale?: number };
+
+    // Ensure scale props stick (some client FeatureLayers ignore ctor options).
+    try {
+      client.minScale = minScale;
+      client.maxScale = maxScale;
+    } catch {
+      /* ignore */
+    }
+
+    const originalVisible = layer.visible;
+    layer.visible = false;
+
+    (this.webmap.layers as { add?: (l: unknown) => void }).add?.(client);
+    this.joinedChartLayers.set(layer.id, {
+      layer: client,
+      originalId: layer.id,
+      originalVisible,
+    });
+
+    if (!this.originalRenderers.has(layer.id)) {
+      this.originalRenderers.set(layer.id, layer.renderer ?? null);
+    }
+  }
+
   applyRenderer(layer: EsriLayer, rendererJson: EsriRenderer): void {
     if (!this.modules) return;
     if (!this.originalRenderers.has(layer.id)) {
@@ -1003,6 +1475,7 @@ export class MapController {
   resetRenderers(group?: LayerGroupId): void {
     if (!group || group === "chart") {
       this.clearChartCallouts();
+      this.clearJoinedChartLayers();
     }
     for (const layer of this.featureLayers()) {
       if (group) {
