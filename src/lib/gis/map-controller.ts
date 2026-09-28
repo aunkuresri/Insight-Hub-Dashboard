@@ -1317,11 +1317,9 @@ export class MapController {
 
   /**
    * Apply a pie-chart renderer using joined table values.
-   * Builds a client-side point FeatureLayer (one chart per admin unit).
-   *
-   * Chart centers are cached per layer + filter expression. The first apply
-   * downloads simplified geometries and stores extent centers; later applies
-   * reuse those points and only update indicator values / renderer.
+   * Point centers load from public/chart-centers/*.json (fast for all users),
+   * then fall back to IndexedDB / geometry query if needed.
+   * Later applies only rejoin values and update the existing client layer.
    */
   async applyJoinedChartRenderer(options: {
     layer: EsriLayer;
@@ -1332,6 +1330,8 @@ export class MapController {
   }): Promise<void> {
     if (!this.modules || !this.webmap) return;
     const { layer, rendererJson, rows, keyField, valueFields } = options;
+
+    const yieldToUi = () => new Promise<void>((r) => setTimeout(r, 0));
 
     const normPlace = (value: unknown): string => {
       let s = String(value ?? "")
@@ -1347,12 +1347,10 @@ export class MapController {
     };
 
     const byKey = new Map<string, Record<string, unknown>>();
-    const displayNameByKey = new Map<string, string>();
     const addKey = (k: string, row: Record<string, unknown>) => {
       const raw = String(k ?? "").trim();
       const nk = normPlace(raw);
       if (!nk) return;
-      if (!displayNameByKey.has(nk) && raw) displayNameByKey.set(nk, raw);
       const prev = byKey.get(nk);
       if (!prev) {
         byKey.set(nk, row);
@@ -1447,8 +1445,69 @@ export class MapController {
       return 0;
     };
 
-    // --- Build or reuse cached placement points (memory → IndexedDB → compute) ---
+    // Memory → static JSON (public/chart-centers) → IndexedDB → compute once
     let centers = this.chartCenterCache.get(cacheKey);
+
+    if (!centers) {
+      const keyLower = keyField.toLowerCase();
+      const titleLower = (layer.title || "").toLowerCase();
+      let staticFile: string | null = null;
+      if (keyLower === "adm1_en" || titleLower.includes("division")) {
+        staticFile = "division.json";
+      } else if (keyLower === "adm2_en" || titleLower.includes("district")) {
+        staticFile = "district.json";
+      } else if (keyLower === "adm3_en" || titleLower.includes("upazila")) {
+        staticFile = "upazila.json";
+      } else if (keyLower === "adm4_en" || titleLower.includes("union")) {
+        staticFile = "union.json";
+      }
+
+      if (staticFile) {
+        try {
+          const res = await fetch(`/chart-centers/${staticFile}`);
+          if (res.ok) {
+            const points = (await res.json()) as Array<Record<string, unknown>>;
+            const nameKey =
+              keyLower === "adm1_en"
+                ? "adm1_en"
+                : keyLower === "adm2_en"
+                  ? "adm2_en"
+                  : keyLower === "adm3_en"
+                    ? "adm3_en"
+                    : "adm4_en";
+
+            centers = points
+              .map((p) => {
+                const name = String(p[nameKey] ?? "").trim();
+                if (!name) return null;
+                const x = Number(p.x);
+                const y = Number(p.y);
+                if (!Number.isFinite(x) || !Number.isFinite(y)) return null;
+                return {
+                  normName: normPlace(name),
+                  name,
+                  geometry: {
+                    type: "point",
+                    x,
+                    y,
+                    spatialReference: { wkid: Number(p.wkid) || 4326 },
+                  },
+                  attrs: {},
+                };
+              })
+              .filter((c): c is ChartCenterEntry => c != null);
+
+            if (centers.length) {
+              this.chartCenterCache.set(cacheKey, centers);
+              void idbSetCenters(cacheKey, centers);
+            }
+          }
+        } catch {
+          // fall through
+        }
+      }
+    }
+
     if (!centers) {
       const fromDisk = await idbGetCenters(cacheKey);
       if (fromDisk?.length) {
@@ -1456,13 +1515,24 @@ export class MapController {
         this.chartCenterCache.set(cacheKey, centers);
       }
     }
+
     if (!centers) {
       const byName = new Map<
         string,
         { name: string; geometries: unknown[]; attrs: Record<string, unknown> }
       >();
 
-      const ingest = (features: EsriFeature[]) => {
+      try {
+        const features = await this.queryAttributes(layer, {
+          where: baseWhere,
+          outFields: [keyField, oidField].filter((v, i, a) => Boolean(v) && a.indexOf(v) === i),
+          returnGeometry: true,
+          num: 50_000,
+          maxAllowableOffset: 5000,
+        });
+        await yieldToUi();
+
+        let n = 0;
         for (const f of features) {
           const attrs = { ...(f.attributes ?? {}) };
           let name = "";
@@ -1479,25 +1549,16 @@ export class MapController {
           const entry = byName.get(nk);
           if (entry) entry.geometries.push(geom);
           else byName.set(nk, { name, geometries: [geom], attrs });
+          n++;
+          if (n % 400 === 0) await yieldToUi();
         }
-      };
-
-      // One coarse geometry query for this layer + current filter (first time only).
-      try {
-        const features = await this.queryAttributes(layer, {
-          where: baseWhere,
-          outFields: [keyField, oidField].filter((v, i, a) => Boolean(v) && a.indexOf(v) === i),
-          returnGeometry: true,
-          num: 50_000,
-          maxAllowableOffset: 5000,
-        });
-        ingest(features);
       } catch {
         return;
       }
 
       centers = [];
-      for (const [nk, { name, geometries, attrs }] of byName) {
+      let i = 0;
+      for (const [nk, { name, geometries }] of byName) {
         if (!geometries.length) continue;
         let best: unknown = geometries[0];
         let bestArea = -1;
@@ -1511,26 +1572,24 @@ export class MapController {
         const point = extentCenter(best);
         if (!point) continue;
         const serial = serializeChartPoint(point) ?? point;
-        centers.push({
-          normName: nk,
-          name,
-          geometry: serial,
-          attrs: {}, // placement only; indicator values joined at apply time
-        });
+        centers.push({ normName: nk, name, geometry: serial, attrs: {} });
+        i++;
+        if (i % 400 === 0) await yieldToUi();
       }
       this.chartCenterCache.set(cacheKey, centers);
-      // Permanent browser storage — survives reload; next visit skips geometry query
       void idbSetCenters(cacheKey, centers);
+      await yieldToUi();
     }
 
-    // --- Join current indicator values onto cached points ---
-    const graphics: unknown[] = [];
+    // Join values onto cached points
+    const graphics: Array<{ geometry: unknown; attributes: Record<string, unknown> }> = [];
     let oid = 1;
+    let j = 0;
     for (const c of centers) {
       const hit = byKey.get(c.normName);
       if (!hit) continue;
 
-      const merged: Record<string, unknown> = { ...c.attrs, [oidField]: oid++ };
+      const merged: Record<string, unknown> = { [oidField]: oid++, [keyField]: c.name };
       for (const vf of valueFields) {
         let val: unknown = 0;
         if (vf in hit) val = hit[vf];
@@ -1545,7 +1604,6 @@ export class MapController {
         const n = Number(val);
         merged[vf] = Number.isFinite(n) ? n : 0;
       }
-      merged[keyField] = c.name;
 
       const hasData = valueFields.some((vf) => {
         const n = Number(merged[vf]);
@@ -1554,13 +1612,45 @@ export class MapController {
       if (!hasData) continue;
 
       graphics.push({ geometry: c.geometry, attributes: merged });
+      j++;
+      if (j % 500 === 0) await yieldToUi();
     }
 
     if (!graphics.length) return;
 
-    // Remove previous joined layer for this source
+    const renderer = this.modules.jsonUtils.fromJSON(rendererJson);
+
+    // Fast path: update existing client layer (avoids destroy/create lag)
     const prev = this.joinedChartLayers.get(layer.id);
-    if (prev) {
+    if (prev?.layer) {
+      try {
+        const client = prev.layer as EsriLayer & {
+          renderer?: unknown;
+          applyEdits?: (edits: {
+            addFeatures?: unknown[];
+            deleteFeatures?: unknown[];
+          }) => Promise<unknown>;
+          queryFeatures?: (q: Record<string, unknown>) => Promise<{ features: EsriFeature[] }>;
+        };
+        client.renderer = renderer;
+        if (typeof client.queryFeatures === "function" && typeof client.applyEdits === "function") {
+          const existing = await client.queryFeatures({
+            where: "1=1",
+            outFields: [oidField],
+            returnGeometry: false,
+            num: 50_000,
+          });
+          await yieldToUi();
+          await client.applyEdits({
+            deleteFeatures: existing.features ?? [],
+            addFeatures: graphics,
+          });
+          layer.visible = false;
+          return;
+        }
+      } catch {
+        // fall through to full rebuild
+      }
       try {
         (this.webmap.layers as { remove?: (l: unknown) => void }).remove?.(prev.layer);
       } catch {
@@ -1579,13 +1669,8 @@ export class MapController {
     for (const vf of valueFields) {
       fields.push({ name: vf, type: "double", alias: vf });
     }
-    for (const af of ["adm1_en", "adm2_en", "adm3_en", "adm4_en", "Unit", "Custom_Unit_Code"]) {
-      if (!fields.some((f) => f.name === af)) {
-        fields.push({ name: af, type: "string" });
-      }
-    }
 
-    const sampleGeom = (graphics[0] as { geometry?: { type?: string } } | undefined)?.geometry;
+    const sampleGeom = graphics[0]?.geometry as { spatialReference?: unknown } | undefined;
     const titleLower = (layer.title || "").trim().toLowerCase();
     const levelMatch = ADMIN_LEVELS.find(
       (l) =>
@@ -1602,15 +1687,15 @@ export class MapController {
       maxScale = levelMatch.maxScale;
     }
 
-    const renderer = this.modules.jsonUtils.fromJSON(rendererJson);
+    await yieldToUi();
+
     const client = new FeatureLayer({
       source: graphics,
       objectIdField: oidField,
       fields,
       geometryType: "point",
       spatialReference:
-        (sampleGeom as { spatialReference?: unknown } | undefined)?.spatialReference ??
-        (layer as { spatialReference?: unknown }).spatialReference,
+        sampleGeom?.spatialReference ?? (layer as { spatialReference?: unknown }).spatialReference,
       renderer,
       title: `${layer.title || "Chart"} (data)`,
       listMode: "hide",
@@ -1628,14 +1713,12 @@ export class MapController {
       /* ignore */
     }
 
-    const originalVisible = layer.visible;
     layer.visible = false;
-
     (this.webmap.layers as { add?: (l: unknown) => void }).add?.(client);
     this.joinedChartLayers.set(layer.id, {
       layer: client,
       originalId: layer.id,
-      originalVisible,
+      originalVisible: true,
     });
 
     if (!this.originalRenderers.has(layer.id)) {
