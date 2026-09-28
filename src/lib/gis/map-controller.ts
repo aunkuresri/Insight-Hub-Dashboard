@@ -182,6 +182,113 @@ async function loadEsri(): Promise<EsriModules> {
   };
 }
 
+
+/** Persisted chart placement points (survives page reload). */
+const CHART_CENTER_DB = "insight-hub-chart-centers";
+const CHART_CENTER_STORE = "centers";
+const CHART_CENTER_DB_VERSION = 1;
+
+type ChartCenterEntry = {
+  normName: string;
+  name: string;
+  geometry: unknown;
+  attrs: Record<string, unknown>;
+};
+
+function openChartCenterDb(): Promise<IDBDatabase | null> {
+  if (typeof indexedDB === "undefined") return Promise.resolve(null);
+  return new Promise((resolve) => {
+    try {
+      const req = indexedDB.open(CHART_CENTER_DB, CHART_CENTER_DB_VERSION);
+      req.onerror = () => resolve(null);
+      req.onupgradeneeded = () => {
+        const db = req.result;
+        if (!db.objectStoreNames.contains(CHART_CENTER_STORE)) {
+          db.createObjectStore(CHART_CENTER_STORE);
+        }
+      };
+      req.onsuccess = () => resolve(req.result);
+    } catch {
+      resolve(null);
+    }
+  });
+}
+
+async function idbGetCenters(key: string): Promise<ChartCenterEntry[] | null> {
+  const db = await openChartCenterDb();
+  if (!db) return null;
+  return new Promise((resolve) => {
+    try {
+      const tx = db.transaction(CHART_CENTER_STORE, "readonly");
+      const store = tx.objectStore(CHART_CENTER_STORE);
+      const req = store.get(key);
+      req.onsuccess = () => {
+        const v = req.result;
+        resolve(Array.isArray(v) ? (v as ChartCenterEntry[]) : null);
+      };
+      req.onerror = () => resolve(null);
+    } catch {
+      resolve(null);
+    }
+  });
+}
+
+async function idbSetCenters(key: string, centers: ChartCenterEntry[]): Promise<void> {
+  const db = await openChartCenterDb();
+  if (!db) return;
+  return new Promise((resolve) => {
+    try {
+      const tx = db.transaction(CHART_CENTER_STORE, "readwrite");
+      const store = tx.objectStore(CHART_CENTER_STORE);
+      store.put(centers, key);
+      tx.oncomplete = () => resolve();
+      tx.onerror = () => resolve();
+    } catch {
+      resolve();
+    }
+  });
+}
+
+async function idbClearCenters(): Promise<void> {
+  const db = await openChartCenterDb();
+  if (!db) return;
+  return new Promise((resolve) => {
+    try {
+      const tx = db.transaction(CHART_CENTER_STORE, "readwrite");
+      tx.objectStore(CHART_CENTER_STORE).clear();
+      tx.oncomplete = () => resolve();
+      tx.onerror = () => resolve();
+    } catch {
+      resolve();
+    }
+  });
+}
+
+/** Strip geometry to a plain serializable point for IndexedDB. */
+function serializeChartPoint(g: unknown): Record<string, unknown> | null {
+  if (!g || typeof g !== "object") return null;
+  const p = g as {
+    type?: string;
+    x?: number;
+    y?: number;
+    longitude?: number;
+    latitude?: number;
+    spatialReference?: { wkid?: number; latestWkid?: number };
+  };
+  const x = typeof p.x === "number" ? p.x : typeof p.longitude === "number" ? p.longitude : null;
+  const y = typeof p.y === "number" ? p.y : typeof p.latitude === "number" ? p.latitude : null;
+  if (x == null || y == null) return null;
+  const sr = p.spatialReference;
+  return {
+    type: "point",
+    x,
+    y,
+    spatialReference: sr
+      ? { wkid: sr.wkid ?? sr.latestWkid, latestWkid: sr.latestWkid ?? sr.wkid }
+      : { wkid: 4326 },
+  };
+}
+
 export class MapController {
   view: EsriMapView | null = null;
   webmap: EsriWebMap | null = null;
@@ -206,6 +313,21 @@ export class MapController {
   private joinedChartLayers = new Map<
     string,
     { layer: EsriLayer; originalId: string; originalVisible: boolean }
+  >();
+
+  /**
+   * Cached chart placement points (one per admin unit).
+   * Key = `${layerId}::${definitionExpression}`.
+   * First apply builds this; later applies only rejoin attribute values.
+   */
+  private chartCenterCache = new Map<
+    string,
+    Array<{
+      normName: string;
+      name: string;
+      geometry: unknown;
+      attrs: Record<string, unknown>;
+    }>
   >();
 
   private initialViewpoint: unknown = null;
@@ -1158,6 +1280,12 @@ export class MapController {
   }
 
   /** Remove client-side joined chart layers and restore original chart visibility. */
+  /** Drop cached chart placement points (next apply rebuilds centers). */
+  clearChartCenterCache(): void {
+    this.chartCenterCache.clear();
+    void idbClearCenters();
+  }
+
   clearJoinedChartLayers(): void {
     if (!this.webmap) {
       this.joinedChartLayers.clear();
@@ -1188,8 +1316,12 @@ export class MapController {
   }
 
   /**
-   * Apply a pie-chart (or any) renderer using joined table values.
-   * Builds a client-side FeatureLayer so attributes exist on features.
+   * Apply a pie-chart renderer using joined table values.
+   * Builds a client-side point FeatureLayer (one chart per admin unit).
+   *
+   * Chart centers are cached per layer + filter expression. The first apply
+   * downloads simplified geometries and stores extent centers; later applies
+   * reuse those points and only update indicator values / renderer.
    */
   async applyJoinedChartRenderer(options: {
     layer: EsriLayer;
@@ -1201,10 +1333,11 @@ export class MapController {
     if (!this.modules || !this.webmap) return;
     const { layer, rendererJson, rows, keyField, valueFields } = options;
 
-    // Index joined rows by admin name (+ Unit / Custom_Unit_Code fallbacks)
-    // Normalize Barishal/Barisal etc. so geometry names match table names.
     const normPlace = (value: unknown): string => {
-      let s = String(value ?? "").trim().toLowerCase().replace(/\s+/g, " ");
+      let s = String(value ?? "")
+        .trim()
+        .toLowerCase()
+        .replace(/\s+/g, " ");
       s = s.replace(/\bbarishal\b/g, "barisal");
       s = s.replace(/\bchattogram\b/g, "chittagong");
       s = s.replace(/\bbogura\b/g, "bogra");
@@ -1212,16 +1345,19 @@ export class MapController {
       s = s.replace(/\bcumilla\b/g, "comilla");
       return s;
     };
+
     const byKey = new Map<string, Record<string, unknown>>();
+    const displayNameByKey = new Map<string, string>();
     const addKey = (k: string, row: Record<string, unknown>) => {
-      const nk = normPlace(k);
+      const raw = String(k ?? "").trim();
+      const nk = normPlace(raw);
       if (!nk) return;
+      if (!displayNameByKey.has(nk) && raw) displayNameByKey.set(nk, raw);
       const prev = byKey.get(nk);
       if (!prev) {
         byKey.set(nk, row);
         return;
       }
-      // Sum numeric fields when multiple rows share a key
       const merged = { ...prev };
       for (const [fk, fv] of Object.entries(row)) {
         const n = Number(fv);
@@ -1234,62 +1370,19 @@ export class MapController {
     };
     for (const row of rows) {
       for (const [k, v] of Object.entries(row)) {
-        if (k.toLowerCase() === keyField.toLowerCase()) {
-          addKey(String(v ?? ""), row);
-        }
+        if (k.toLowerCase() === keyField.toLowerCase()) addKey(String(v ?? ""), row);
       }
       for (const alt of ["adm1_en", "adm2_en", "adm3_en", "adm4_en", "Unit", "Custom_Unit_Code"]) {
         for (const [k, v] of Object.entries(row)) {
-          if (k.toLowerCase() === alt.toLowerCase()) {
-            addKey(String(v ?? ""), row);
-          }
+          if (k.toLowerCase() === alt.toLowerCase()) addKey(String(v ?? ""), row);
         }
       }
     }
 
     const oidField = layer.objectIdField || "OBJECTID";
-    const where = layer.definitionExpression || "1=1";
-    // Only need the name key for grouping; values come from the joined rows.
-    // Simplified geometries + extent.center → fast multipart chart placement.
-    const features = await this.queryAttributes(layer, {
-      where,
-      outFields: [keyField, "adm1_en", "adm2_en", "adm3_en", "adm4_en", "Unit", "Custom_Unit_Code", oidField].filter(
-        (v, i, a) => Boolean(v) && a.indexOf(v) === i,
-      ),
-      returnGeometry: true,
-      num: 50_000,
-      // Coarse simplification: we only use extent centers, not ring detail.
-      maxAllowableOffset: 500,
-    });
+    const baseWhere = layer.definitionExpression || "1=1";
+    const cacheKey = `${layer.id}::${baseWhere}::${keyField}`;
 
-    // One chart per administrative unit — collect ALL polygon parts, then
-    // place the chart at the largest part's extent center (no geometryEngine).
-    const byName = new Map<
-      string,
-      { name: string; geometries: unknown[]; attrs: Record<string, unknown> }
-    >();
-    for (const f of features) {
-      const attrs = { ...(f.attributes ?? {}) };
-      let name = "";
-      for (const [k, v] of Object.entries(attrs)) {
-        if (k.toLowerCase() === keyField.toLowerCase()) {
-          name = String(v ?? "").trim();
-          break;
-        }
-      }
-      if (!name || !f.geometry) continue;
-      const nk = normPlace(name);
-      const entry = byName.get(nk);
-      if (entry) {
-        entry.geometries.push(f.geometry);
-      } else {
-        byName.set(nk, { name, geometries: [f.geometry], attrs });
-      }
-    }
-
-    // Fast chart location for multipart admin units:
-    // use each part's extent center and keep the part with the largest extent.
-    // No geometryEngine.union / centroid / labelPoint (those were the lag).
     const extentCenter = (g: unknown): unknown | null => {
       const geom = g as {
         extent?: {
@@ -1301,9 +1394,12 @@ export class MapController {
           spatialReference?: unknown;
         };
         spatialReference?: unknown;
+        centroid?: unknown;
         type?: string;
       } | null;
       if (!geom) return null;
+      if (geom.type === "point") return geom;
+      if (geom.centroid) return geom.centroid;
       const ext = geom.extent;
       if (ext?.center) return ext.center;
       if (
@@ -1324,7 +1420,18 @@ export class MapController {
     };
 
     const extentArea = (g: unknown): number => {
-      const ext = (g as { extent?: { width?: number; height?: number; xmin?: number; xmax?: number; ymin?: number; ymax?: number } } | null)?.extent;
+      const ext = (
+        g as {
+          extent?: {
+            width?: number;
+            height?: number;
+            xmin?: number;
+            xmax?: number;
+            ymin?: number;
+            ymax?: number;
+          };
+        } | null
+      )?.extent;
       if (!ext) return 0;
       if (typeof ext.width === "number" && typeof ext.height === "number") {
         return Math.abs(ext.width * ext.height);
@@ -1340,53 +1447,116 @@ export class MapController {
       return 0;
     };
 
+    // --- Build or reuse cached placement points (memory → IndexedDB → compute) ---
+    let centers = this.chartCenterCache.get(cacheKey);
+    if (!centers) {
+      const fromDisk = await idbGetCenters(cacheKey);
+      if (fromDisk?.length) {
+        centers = fromDisk;
+        this.chartCenterCache.set(cacheKey, centers);
+      }
+    }
+    if (!centers) {
+      const byName = new Map<
+        string,
+        { name: string; geometries: unknown[]; attrs: Record<string, unknown> }
+      >();
+
+      const ingest = (features: EsriFeature[]) => {
+        for (const f of features) {
+          const attrs = { ...(f.attributes ?? {}) };
+          let name = "";
+          for (const [k, v] of Object.entries(attrs)) {
+            if (k.toLowerCase() === keyField.toLowerCase()) {
+              name = String(v ?? "").trim();
+              break;
+            }
+          }
+          if (!name) continue;
+          const nk = normPlace(name);
+          const geom = (f as { centroid?: unknown }).centroid ?? f.geometry;
+          if (!geom) continue;
+          const entry = byName.get(nk);
+          if (entry) entry.geometries.push(geom);
+          else byName.set(nk, { name, geometries: [geom], attrs });
+        }
+      };
+
+      // One coarse geometry query for this layer + current filter (first time only).
+      try {
+        const features = await this.queryAttributes(layer, {
+          where: baseWhere,
+          outFields: [keyField, oidField].filter((v, i, a) => Boolean(v) && a.indexOf(v) === i),
+          returnGeometry: true,
+          num: 50_000,
+          maxAllowableOffset: 5000,
+        });
+        ingest(features);
+      } catch {
+        return;
+      }
+
+      centers = [];
+      for (const [nk, { name, geometries, attrs }] of byName) {
+        if (!geometries.length) continue;
+        let best: unknown = geometries[0];
+        let bestArea = -1;
+        for (const g of geometries) {
+          const a = extentArea(g);
+          if (a > bestArea) {
+            bestArea = a;
+            best = g;
+          }
+        }
+        const point = extentCenter(best);
+        if (!point) continue;
+        const serial = serializeChartPoint(point) ?? point;
+        centers.push({
+          normName: nk,
+          name,
+          geometry: serial,
+          attrs: {}, // placement only; indicator values joined at apply time
+        });
+      }
+      this.chartCenterCache.set(cacheKey, centers);
+      // Permanent browser storage — survives reload; next visit skips geometry query
+      void idbSetCenters(cacheKey, centers);
+    }
+
+    // --- Join current indicator values onto cached points ---
     const graphics: unknown[] = [];
     let oid = 1;
-    for (const { name, geometries, attrs } of byName.values()) {
-      const hit = byKey.get(normPlace(name));
-      const merged: Record<string, unknown> = { ...attrs, [oidField]: oid++ };
+    for (const c of centers) {
+      const hit = byKey.get(c.normName);
+      if (!hit) continue;
+
+      const merged: Record<string, unknown> = { ...c.attrs, [oidField]: oid++ };
       for (const vf of valueFields) {
         let val: unknown = 0;
-        if (hit) {
-          if (vf in hit) val = hit[vf];
-          else {
-            for (const [k, v] of Object.entries(hit)) {
-              if (k.toLowerCase() === vf.toLowerCase()) {
-                val = v;
-                break;
-              }
+        if (vf in hit) val = hit[vf];
+        else {
+          for (const [k, v] of Object.entries(hit)) {
+            if (k.toLowerCase() === vf.toLowerCase()) {
+              val = v;
+              break;
             }
           }
         }
         const n = Number(val);
         merged[vf] = Number.isFinite(n) ? n : 0;
       }
-      merged[keyField] = name;
+      merged[keyField] = c.name;
 
-      // Skip empty pies (no joined data) — avoids blank circles for unmatched units
       const hasData = valueFields.some((vf) => {
         const n = Number(merged[vf]);
         return Number.isFinite(n) && n > 0;
       });
       if (!hasData) continue;
 
-      // Largest part by extent area → extent center (one point per admin unit).
-      let bestGeom: unknown = geometries[0];
-      let bestArea = -1;
-      for (const g of geometries) {
-        const a = extentArea(g);
-        if (a > bestArea) {
-          bestArea = a;
-          bestGeom = g;
-        }
-      }
-      const geom = extentCenter(bestGeom) ?? bestGeom;
-
-      graphics.push({
-        geometry: geom,
-        attributes: merged,
-      });
+      graphics.push({ geometry: c.geometry, attributes: merged });
     }
+
+    if (!graphics.length) return;
 
     // Remove previous joined layer for this source
     const prev = this.joinedChartLayers.get(layer.id);
@@ -1409,23 +1579,13 @@ export class MapController {
     for (const vf of valueFields) {
       fields.push({ name: vf, type: "double", alias: vf });
     }
-    // Keep common admin fields if present
     for (const af of ["adm1_en", "adm2_en", "adm3_en", "adm4_en", "Unit", "Custom_Unit_Code"]) {
       if (!fields.some((f) => f.name === af)) {
         fields.push({ name: af, type: "string" });
       }
     }
 
-    // Centroid conversion yields points; fall back to source layer type.
     const sampleGeom = (graphics[0] as { geometry?: { type?: string } } | undefined)?.geometry;
-    const geomType =
-      (sampleGeom?.type === "point" ? "point" : null) ||
-      (layer as { geometryType?: string }).geometryType ||
-      (features[0]?.geometry as { type?: string } | undefined)?.type ||
-      "polygon";
-
-    // Scale dependency: prefer web-map layer values, else ADMIN_LEVELS ranges
-    // (Division / District / Upazila / Union Chart must not all show at once).
     const titleLower = (layer.title || "").trim().toLowerCase();
     const levelMatch = ADMIN_LEVELS.find(
       (l) =>
@@ -1437,7 +1597,6 @@ export class MapController {
     let maxScale = Number(layer.maxScale);
     if (!Number.isFinite(minScale) || minScale < 0) minScale = 0;
     if (!Number.isFinite(maxScale) || maxScale < 0) maxScale = 0;
-    // If the layer reports "always visible" (0/0) but we know admin scale ranges, use those.
     if (minScale === 0 && maxScale === 0 && levelMatch) {
       minScale = levelMatch.minScale;
       maxScale = levelMatch.maxScale;
@@ -1448,8 +1607,10 @@ export class MapController {
       source: graphics,
       objectIdField: oidField,
       fields,
-      geometryType: geomType === "point" || geomType === "polygon" || geomType === "polyline" ? geomType : "polygon",
-      spatialReference: (features[0]?.geometry as { spatialReference?: unknown } | undefined)?.spatialReference,
+      geometryType: "point",
+      spatialReference:
+        (sampleGeom as { spatialReference?: unknown } | undefined)?.spatialReference ??
+        (layer as { spatialReference?: unknown }).spatialReference,
       renderer,
       title: `${layer.title || "Chart"} (data)`,
       listMode: "hide",
@@ -1460,7 +1621,6 @@ export class MapController {
       maxScale,
     }) as EsriLayer & { minScale?: number; maxScale?: number };
 
-    // Ensure scale props stick (some client FeatureLayers ignore ctor options).
     try {
       client.minScale = minScale;
       client.maxScale = maxScale;
@@ -1482,6 +1642,7 @@ export class MapController {
       this.originalRenderers.set(layer.id, layer.renderer ?? null);
     }
   }
+
 
   applyRenderer(layer: EsriLayer, rendererJson: EsriRenderer): void {
     if (!this.modules) return;
@@ -1529,12 +1690,17 @@ export class MapController {
     }
   }
 
-  setPadding(padding: Partial<EsriMapView["padding"]>): void {
+  getScale(): number {
+    return this.view?.scale ?? 0;
+  }
+
+    setPadding(padding: Partial<EsriMapView["padding"]>): void {
     if (!this.view) return;
     this.view.padding = { ...this.view.padding, ...padding };
   }
 
   destroy(): void {
+    this.chartCenterCache.clear();
     this.clearHighlight();
     for (const h of this.handles) {
       try {
