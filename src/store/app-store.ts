@@ -504,69 +504,98 @@ export const useAppStore = create<AppState>((set, get) => ({
     try {
       const layers = map.layersFor(symLayerGroup, symAdminLevel);
       if (!layers.length) throw new Error("No matching web map layers were found for that group / level.");
-      let lastLegend: AppliedLegend | null = null;
-      for (const layer of layers) {
-        const schema: FieldInfo[] = map.schemaOf(layer);
-        const resolved = symFields
-          .map((id) => {
-            const info = resolveField(schema, id);
-            return info ? { id, name: info.name, label: labelForField(id) } : null;
-          })
-          .filter(Boolean) as Array<{ id: string; name: string; label: string }>;
-        if (!resolved.length) throw new Error(`None of the selected fields exist on "${layer.title}".`);
-        const aliases = Object.fromEntries(resolved.map((f) => [f.name, f.label]));
-        const names = resolved.map((f) => f.name);
-        const sizeResolved = symSizeField ? resolveField(schema, symSizeField) : null;
-        const queryFields = sizeResolved ? [...new Set([...names, sizeResolved.name])] : names;
-        const features = await map.queryAttributes(layer, {
-          outFields: queryFields,
-          returnGeometry: false,
-        });
-        const rows = features.map((f) => f.attributes);
-        const built =
-          symLayerGroup === "chart"
-            ? buildChartRenderer({
-                rows,
-                fields: names,
-                aliases,
-                requestedScheme: symScheme,
-                sizeField: sizeResolved?.name,
-                sizeLabel: sizeResolved ? labelForField(symSizeField) : null,
-              })
-            : buildBoundaryRenderer({
-                rows,
-                fields: names,
-                aliases,
-                requestedScheme: symScheme,
-              });
-        if (symLayerGroup === "chart") {
-          // Multipart admin polygons: build point layer at extent centers (one pie per unit).
-          // Avoids slow per-part center work when the pie renderer runs on full polygons.
+
+      // Run all admin levels in parallel (was sequential → Union waited behind Division/District/Upazila).
+      const results = await Promise.all(
+        layers.map(async (layer) => {
+          const schema: FieldInfo[] = map.schemaOf(layer);
+          const resolved = symFields
+            .map((id) => {
+              const info = resolveField(schema, id);
+              return info ? { id, name: info.name, label: labelForField(id) } : null;
+            })
+            .filter(Boolean) as Array<{ id: string; name: string; label: string }>;
+          if (!resolved.length) {
+            throw new Error(`None of the selected fields exist on "${layer.title}".`);
+          }
+          const aliases = Object.fromEntries(resolved.map((f) => [f.name, f.label]));
+          const names = resolved.map((f) => f.name);
+          const sizeResolved = symSizeField ? resolveField(schema, symSizeField) : null;
+
           const levelMatch =
             ADMIN_LEVELS.find(
               (l) => (layer.title || "").trim().toLowerCase() === l.layerTitles.chart.toLowerCase(),
             ) ??
+            ADMIN_LEVELS.find(
+              (l) => (layer.title || "").trim().toLowerCase() === l.layerTitles.boundary.toLowerCase(),
+            ) ??
             ADMIN_LEVELS.find((l) => (layer.title || "").toLowerCase().includes(l.id));
+
           const keyField =
             levelMatch?.nameField ??
             schema.find((s) => /adm[1-4]_en/i.test(s.name))?.name ??
             names[0] ??
             "name";
 
-          await map.applyJoinedChartRenderer({
-            layer,
-            rendererJson: built.renderer,
-            rows,
+          // Must request name/code fields or join has nothing to match on.
+          const nameFields = [
             keyField,
-            valueFields: sizeResolved ? [...new Set([...names, sizeResolved.name])] : names,
-          });
-        } else {
-          map.applyRenderer(layer, built.renderer);
-          layer.visible = true;
-        }
+            "adm1_en",
+            "adm2_en",
+            "adm3_en",
+            "adm4_en",
+            levelMatch?.codeField,
+          ].filter(Boolean) as string[];
+          const queryFields = [
+            ...new Set([
+              ...names,
+              ...(sizeResolved ? [sizeResolved.name] : []),
+              ...nameFields,
+            ]),
+          ];
 
-        lastLegend = built.legend;
-      }
+          const features = await map.queryAttributes(layer, {
+            outFields: queryFields,
+            returnGeometry: false,
+            num: 50_000,
+          });
+          const rows = features.map((f) => f.attributes ?? {});
+
+          const built =
+            symLayerGroup === "chart"
+              ? buildChartRenderer({
+                  rows,
+                  fields: names,
+                  aliases,
+                  requestedScheme: symScheme,
+                  sizeField: sizeResolved?.name,
+                  sizeLabel: sizeResolved ? labelForField(symSizeField) : null,
+                })
+              : buildBoundaryRenderer({
+                  rows,
+                  fields: names,
+                  aliases,
+                  requestedScheme: symScheme,
+                });
+
+          if (symLayerGroup === "chart") {
+            await map.applyJoinedChartRenderer({
+              layer,
+              rendererJson: built.renderer,
+              rows,
+              keyField,
+              valueFields: sizeResolved ? [...new Set([...names, sizeResolved.name])] : names,
+            });
+          } else {
+            map.applyRenderer(layer, built.renderer);
+            layer.visible = true;
+          }
+
+          return built.legend as AppliedLegend | null;
+        }),
+      );
+
+      const lastLegend = results.filter(Boolean).pop() ?? null;
       set({
         applied: { ...get().applied, [symLayerGroup]: lastLegend },
         symApplying: false,
