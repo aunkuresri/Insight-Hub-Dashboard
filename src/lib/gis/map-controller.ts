@@ -195,6 +195,52 @@ type ChartCenterEntry = {
   attrs: Record<string, unknown>;
 };
 
+/** Module-level cache: each static JSON file is fetched & parsed only once per page load. */
+const staticCentersByFile = new Map<string, Promise<ChartCenterEntry[] | null>>();
+
+function loadStaticChartCenters(
+  file: string,
+  nameKey: string,
+  normPlace: (v: unknown) => string,
+): Promise<ChartCenterEntry[] | null> {
+  const cacheKey = `${file}::${nameKey}`;
+  let pending = staticCentersByFile.get(cacheKey);
+  if (pending) return pending;
+
+  pending = (async () => {
+    try {
+      const res = await fetch(`/chart-centers/${file}`);
+      if (!res.ok) return null;
+      const points = (await res.json()) as Array<Record<string, unknown>>;
+      const centers: ChartCenterEntry[] = [];
+      for (const p of points) {
+        const name = String(p[nameKey] ?? "").trim();
+        if (!name) continue;
+        const x = Number(p.x);
+        const y = Number(p.y);
+        if (!Number.isFinite(x) || !Number.isFinite(y)) continue;
+        centers.push({
+          normName: normPlace(name),
+          name,
+          geometry: {
+            type: "point",
+            x,
+            y,
+            spatialReference: { wkid: Number(p.wkid) || 4326 },
+          },
+          attrs: {},
+        });
+      }
+      return centers.length ? centers : null;
+    } catch {
+      return null;
+    }
+  })();
+
+  staticCentersByFile.set(cacheKey, pending);
+  return pending;
+}
+
 function openChartCenterDb(): Promise<IDBDatabase | null> {
   if (typeof indexedDB === "undefined") return Promise.resolve(null);
   return new Promise((resolve) => {
@@ -1445,65 +1491,35 @@ export class MapController {
       return 0;
     };
 
-    // Memory → static JSON (public/chart-centers) → IndexedDB → compute once
+    // Memory → static JSON (public/chart-centers, fetched once) → IndexedDB → compute once
     let centers = this.chartCenterCache.get(cacheKey);
 
     if (!centers) {
       const keyLower = keyField.toLowerCase();
       const titleLower = (layer.title || "").toLowerCase();
       let staticFile: string | null = null;
+      let nameKey = "adm1_en";
       if (keyLower === "adm1_en" || titleLower.includes("division")) {
         staticFile = "division.json";
+        nameKey = "adm1_en";
       } else if (keyLower === "adm2_en" || titleLower.includes("district")) {
         staticFile = "district.json";
+        nameKey = "adm2_en";
       } else if (keyLower === "adm3_en" || titleLower.includes("upazila")) {
         staticFile = "upazila.json";
+        nameKey = "adm3_en";
       } else if (keyLower === "adm4_en" || titleLower.includes("union")) {
         staticFile = "union.json";
+        nameKey = "adm4_en";
       }
 
       if (staticFile) {
-        try {
-          const res = await fetch(`/chart-centers/${staticFile}`);
-          if (res.ok) {
-            const points = (await res.json()) as Array<Record<string, unknown>>;
-            const nameKey =
-              keyLower === "adm1_en"
-                ? "adm1_en"
-                : keyLower === "adm2_en"
-                  ? "adm2_en"
-                  : keyLower === "adm3_en"
-                    ? "adm3_en"
-                    : "adm4_en";
-
-            centers = points
-              .map((p) => {
-                const name = String(p[nameKey] ?? "").trim();
-                if (!name) return null;
-                const x = Number(p.x);
-                const y = Number(p.y);
-                if (!Number.isFinite(x) || !Number.isFinite(y)) return null;
-                return {
-                  normName: normPlace(name),
-                  name,
-                  geometry: {
-                    type: "point",
-                    x,
-                    y,
-                    spatialReference: { wkid: Number(p.wkid) || 4326 },
-                  },
-                  attrs: {},
-                };
-              })
-              .filter((c): c is ChartCenterEntry => c != null);
-
-            if (centers.length) {
-              this.chartCenterCache.set(cacheKey, centers);
-              void idbSetCenters(cacheKey, centers);
-            }
-          }
-        } catch {
-          // fall through
+        const fromStatic = await loadStaticChartCenters(staticFile, nameKey, normPlace);
+        if (fromStatic?.length) {
+          centers = fromStatic;
+          this.chartCenterCache.set(cacheKey, centers);
+          // skip IndexedDB write for large static sets (union ~5k) — memory cache is enough
+          if (centers.length < 1000) void idbSetCenters(cacheKey, centers);
         }
       }
     }
@@ -1613,7 +1629,7 @@ export class MapController {
 
       graphics.push({ geometry: c.geometry, attributes: merged });
       j++;
-      if (j % 500 === 0) await yieldToUi();
+      if (j % 2000 === 0) await yieldToUi();
     }
 
     if (!graphics.length) return;
