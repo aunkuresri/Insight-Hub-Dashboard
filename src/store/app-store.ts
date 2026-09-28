@@ -539,61 +539,32 @@ export const useAppStore = create<AppState>((set, get) => ({
                 aliases,
                 requestedScheme: symScheme,
               });
-        map.applyRenderer(layer, built.renderer);
-        layer.visible = true;
-
-
-
-        //Chart_Label
         if (symLayerGroup === "chart") {
-          const totalExpr = names
-            .map((f) => `When(IsEmpty($feature[${JSON.stringify(f)}]),0,Max($feature[${JSON.stringify(f)}],0))`)
-            .join(" + ");
-        
-          const expressionInfos = names.map((f, i) => {
-            const label = aliases[f] ?? f;
-            const fRef = `$feature[${JSON.stringify(f)}]`;
-            return {
-              name: `slice_${i}`,
-              title: label,
-              expression: `
-                var v = When(IsEmpty(${fRef}), 0, Max(${fRef}, 0));
-                var t = ${totalExpr};
-                var pct = IIF(t == 0, 0, Round(100 * v / t, 1));
-                return Text(v) + " (" + Text(pct) + "%)";
-              `,
-            };
+          // Multipart admin polygons: build point layer at extent centers (one pie per unit).
+          // Avoids slow per-part center work when the pie renderer runs on full polygons.
+          const levelMatch =
+            ADMIN_LEVELS.find(
+              (l) => (layer.title || "").trim().toLowerCase() === l.layerTitles.chart.toLowerCase(),
+            ) ??
+            ADMIN_LEVELS.find((l) => (layer.title || "").toLowerCase().includes(l.id));
+          const keyField =
+            levelMatch?.nameField ??
+            schema.find((s) => /adm[1-4]_en/i.test(s.name))?.name ??
+            names[0] ??
+            "name";
+
+          await map.applyJoinedChartRenderer({
+            layer,
+            rendererJson: built.renderer,
+            rows,
+            keyField,
+            valueFields: sizeResolved ? [...new Set([...names, sizeResolved.name])] : names,
           });
-        
-          const nameField =
-            // optional: show division/district name if present
-            schema.find((s) => /adm[1-4]_en/i.test(s.name))?.name;
-        
-          layer.popupTemplate = {
-            title: nameField ? `{${nameField}}` : layer.title || "Chart",
-            expressionInfos,
-            content: [
-              {
-                type: "fields",
-                fieldInfos: expressionInfos.map((e) => ({
-                  fieldName: `expression/${e.name}`,
-                  label: e.title,
-                })),
-              },
-            ],
-          };
-          layer.popupEnabled = true;
-          layer.outFields = ["*"];
+        } else {
+          map.applyRenderer(layer, built.renderer);
+          layer.visible = true;
         }
 
-
-
-
-        
-
-
-
-        
         lastLegend = built.legend;
       }
       set({
