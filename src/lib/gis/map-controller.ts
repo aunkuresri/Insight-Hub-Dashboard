@@ -1252,7 +1252,8 @@ export class MapController {
 
     const oidField = layer.objectIdField || "OBJECTID";
     // One chart per administrative unit — collect ALL polygon parts, then
-    // place the chart at the centroid of the union (true center of the unit).
+    // place the chart on the largest part (labelPoint / centroid). Avoids slow
+    // multipart union while still centering on the main body of the unit.
     const byName = new Map<
       string,
       { name: string; geometries: unknown[]; attrs: Record<string, unknown> }
@@ -1276,25 +1277,109 @@ export class MapController {
       }
     }
 
-    // geometryEngine: union all parts → centroid of the whole unit
-    let unionGeoms: ((gs: unknown[]) => unknown) | null = null;
+    // geometryEngine helpers for chart placement.
+    // Multipart admin units are common (islands / disconnected polygons). Full
+    // union of every part is very slow — instead pick the largest part and use
+    // labelPoint (inside the polygon) or centroid. Same visual placement for
+    // charts without the union cost.
+    let toLabelPoint: ((g: unknown) => unknown) | null = null;
     let toCentroid: ((g: unknown) => unknown) | null = null;
+    let planarArea: ((g: unknown) => number) | null = null;
     try {
       const geMod = await import("@arcgis/core/geometry/geometryEngine.js");
       const ge = geMod as {
-        union?: (gs: unknown[]) => unknown;
+        labelPoints?: (gs: unknown[]) => unknown[];
+        labelPoint?: (g: unknown) => unknown;
         centroid?: (g: unknown) => unknown;
+        planarArea?: (g: unknown) => number;
+        geodesicArea?: (g: unknown, unit?: string) => number;
         default?: {
-          union?: (gs: unknown[]) => unknown;
+          labelPoints?: (gs: unknown[]) => unknown[];
+          labelPoint?: (g: unknown) => unknown;
           centroid?: (g: unknown) => unknown;
+          planarArea?: (g: unknown) => number;
+          geodesicArea?: (g: unknown, unit?: string) => number;
         };
       };
-      unionGeoms = ge.union ?? ge.default?.union ?? null;
+      toLabelPoint =
+        ge.labelPoint ??
+        ge.default?.labelPoint ??
+        ((g: unknown) => {
+          const fn = ge.labelPoints ?? ge.default?.labelPoints;
+          if (!fn) return null;
+          const pts = fn([g]);
+          return pts?.[0] ?? null;
+        });
       toCentroid = ge.centroid ?? ge.default?.centroid ?? null;
+      planarArea =
+        ge.planarArea ??
+        ge.default?.planarArea ??
+        ((g: unknown) => {
+          const fn = ge.geodesicArea ?? ge.default?.geodesicArea;
+          if (!fn) return 0;
+          try {
+            return Math.abs(fn(g, "square-meters"));
+          } catch {
+            return 0;
+          }
+        });
     } catch {
-      unionGeoms = null;
+      toLabelPoint = null;
       toCentroid = null;
+      planarArea = null;
     }
+
+    /** Fast area proxy when planarArea is unavailable (extent width × height). */
+    const extentArea = (g: unknown): number => {
+      const ext = (g as { extent?: { width?: number; height?: number } } | null)?.extent;
+      if (ext && typeof ext.width === "number" && typeof ext.height === "number") {
+        return Math.abs(ext.width * ext.height);
+      }
+      return 0;
+    };
+
+    const pickLargest = (geoms: unknown[]): unknown => {
+      if (geoms.length === 1) return geoms[0];
+      let best = geoms[0];
+      let bestArea = -1;
+      for (const g of geoms) {
+        let a = 0;
+        if (planarArea) {
+          try {
+            a = Math.abs(planarArea(g));
+          } catch {
+            a = extentArea(g);
+          }
+        } else {
+          a = extentArea(g);
+        }
+        if (a > bestArea) {
+          bestArea = a;
+          best = g;
+        }
+      }
+      return best;
+    };
+
+    const pointFor = (g: unknown): unknown => {
+      if (toLabelPoint) {
+        try {
+          const p = toLabelPoint(g);
+          if (p) return p;
+        } catch {
+          /* fall through */
+        }
+      }
+      if (toCentroid) {
+        try {
+          const c = toCentroid(g);
+          if (c) return c;
+        } catch {
+          /* fall through */
+        }
+      }
+      return g;
+    };
 
     const graphics: unknown[] = [];
     let oid = 1;
@@ -1326,31 +1411,9 @@ export class MapController {
       });
       if (!hasData) continue;
 
-      // Union all parts for this admin unit, then centroid
-      let geom: unknown = geometries[0];
-      try {
-        let combined: unknown = geometries[0];
-        if (geometries.length > 1 && unionGeoms) {
-          const u = unionGeoms(geometries);
-          if (u) combined = u;
-        }
-        if (toCentroid && combined) {
-          const c = toCentroid(combined);
-          if (c) geom = c;
-        } else if (combined) {
-          geom = combined;
-        }
-      } catch {
-        // Fall back: centroid of first part only
-        if (toCentroid && geometries[0]) {
-          try {
-            const c = toCentroid(geometries[0]);
-            if (c) geom = c;
-          } catch {
-            geom = geometries[0];
-          }
-        }
-      }
+      // Place chart on the largest part only (no multipart union — that was the lag).
+      const mainPart = pickLargest(geometries);
+      const geom = pointFor(mainPart);
 
       graphics.push({
         geometry: geom,
